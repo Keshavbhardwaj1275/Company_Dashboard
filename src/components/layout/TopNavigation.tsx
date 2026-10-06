@@ -125,6 +125,7 @@ export const TopNavigation: React.FC = () => {
         <div className="relative z-50">
           <button
             type="button"
+            data-testid="profile-dropdown-btn"
             onClick={() => setIsProfileOpen(!isProfileOpen)}
             className="flex items-center gap-1.5 p-1 rounded-full hover:ring-2 hover:ring-white/80 dark:hover:ring-white/20 transition-all outline-none"
           >
@@ -193,6 +194,7 @@ export const TopNavigation: React.FC = () => {
                   <div className="pt-1 border-t border-[#E2E8F0] dark:border-white/10">
                     <button
                       type="button"
+                      data-testid="sign-out-btn"
                       onClick={() => {
                         setIsAuthenticated(false);
                         setIsProfileOpen(false);

@@ -11,6 +11,7 @@ export interface Employee {
   password?: string;
   avatar: string;
   department: 'Engineering' | 'Design' | 'Product' | 'Marketing' | 'HR' | 'Finance' | 'Operations';
+  firstTimeCompleted?: boolean;
   role: string;
   systemRole: Role;
   seedRole: Role;

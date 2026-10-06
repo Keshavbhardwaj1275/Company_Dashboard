@@ -81,10 +81,74 @@ interface AppContextType {
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
 
+// Helper function to create employee-specific work session
+const createSessionFromEmployee = (emp: Employee): WorkSession => ({
+  isActive: emp.status !== 'offline',
+  isPaused: emp.status === 'idle',
+  isOnBreak: emp.status === 'break',
+  isSimulatedIdle: false,
+  loginTime: emp.loginTime || '09:00 AM',
+  logoutTime: emp.logoutTime || '--',
+  activeSeconds: emp.activeSeconds || 21600,
+  idleSeconds: emp.idleSeconds || 1200,
+  breakSeconds: emp.breakSeconds || 1800,
+  systemLockSeconds: 0,
+  screenInactivitySeconds: 0,
+  keyboardActivity: emp.keyboardActivity || 'High',
+  mouseActivity: emp.mouseActivity || 'Active',
+  lastHeartbeat: new Date(),
+});
+
 export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
-  const [role, setRoleState] = useState<Role>('employee');
-  const [employees, setEmployees] = useState<Employee[]>(initialEmployees);
-  const [currentUser, setCurrentUser] = useState<Employee>(initialEmployees[0]);
+  const [employees, setEmployees] = useState<Employee[]>(() => {
+    try {
+      const saved = localStorage.getItem('flowsphere-employees-dataset');
+      if (saved) return JSON.parse(saved);
+    } catch (e) {
+      console.error(e);
+    }
+    return initialEmployees;
+  });
+
+  const [currentUser, setCurrentUserState] = useState<Employee>(() => {
+    try {
+      const savedEmpId = localStorage.getItem('flowsphere-auth-emp-id');
+      const isAuth = localStorage.getItem('flowsphere-is-authenticated') === 'true';
+      if (isAuth && savedEmpId) {
+        const match = initialEmployees.find(
+          (e) => e.employeeId.toLowerCase() === savedEmpId.toLowerCase() || e.id === savedEmpId
+        );
+        if (match) return match;
+      }
+    } catch (e) {
+      console.error(e);
+    }
+    return initialEmployees[0];
+  });
+
+  const [isAuthenticated, setIsAuthenticatedState] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem('flowsphere-is-authenticated') === 'true';
+    } catch (e) {
+      return false;
+    }
+  });
+
+  const [role, setRoleState] = useState<Role>(() => {
+    try {
+      const savedEmpId = localStorage.getItem('flowsphere-auth-emp-id');
+      if (savedEmpId) {
+        const match = initialEmployees.find(
+          (e) => e.employeeId.toLowerCase() === savedEmpId.toLowerCase() || e.id === savedEmpId
+        );
+        if (match) return match.systemRole || match.seedRole || 'employee';
+      }
+    } catch (e) {
+      console.error(e);
+    }
+    return 'employee';
+  });
+
   const [activeTab, setActiveTab] = useState<ActiveTab>('dashboard');
   const [tasks, setTasks] = useState<WorkflowTask[]>(initialWorkflowTasks);
   const [notifications, setNotifications] = useState<NotificationItem[]>(mockNotifications);
@@ -105,32 +169,55 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false);
   const [theme, setThemeState] = useState<'light' | 'dark'>('light');
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
-  const [isAuthenticated, setIsAuthenticated] = useState(false);
 
   // Login attempt restrictions state
   const [loginAttempts, setLoginAttempts] = useState(0);
   const [isLockedOut, setIsLockedOut] = useState(false);
   const [lockoutSeconds, setLockoutSeconds] = useState(0);
 
-  // Live session timer state
-  const [workSession, setWorkSession] = useState<WorkSession>({
-    isActive: true,
-    isPaused: false,
-    isOnBreak: false,
-    isSimulatedIdle: false,
-    loginTime: '09:04 AM',
-    logoutTime: '--',
-    activeSeconds: 24120, // 06h 42m
-    idleSeconds: 1920,   // 32m
-    breakSeconds: 2460,  // 41m
-    systemLockSeconds: 0,
-    screenInactivitySeconds: 0,
-    keyboardActivity: 'High',
-    mouseActivity: 'Active',
-    lastHeartbeat: new Date(),
+  // Live session timer state initialized per authenticated user
+  const [workSession, setWorkSession] = useState<WorkSession>(() => {
+    try {
+      const savedEmpId = localStorage.getItem('flowsphere-auth-emp-id');
+      if (savedEmpId) {
+        const match = initialEmployees.find(
+          (e) => e.employeeId.toLowerCase() === savedEmpId.toLowerCase() || e.id === savedEmpId
+        );
+        if (match) return createSessionFromEmployee(match);
+      }
+    } catch (e) {
+      console.error(e);
+    }
+    return createSessionFromEmployee(initialEmployees[0]);
   });
 
   const lastActivityTimestamp = useRef<number>(Date.now());
+
+  // Dynamic setCurrentUser that updates session and persists user identity
+  const setCurrentUser = (emp: Employee) => {
+    setCurrentUserState(emp);
+    try {
+      localStorage.setItem('flowsphere-auth-emp-id', emp.employeeId);
+    } catch (e) {
+      console.error(e);
+    }
+    setWorkSession(createSessionFromEmployee(emp));
+  };
+
+  // Dynamic setIsAuthenticated that manages local storage
+  const setIsAuthenticated = (auth: boolean) => {
+    setIsAuthenticatedState(auth);
+    try {
+      if (auth) {
+        localStorage.setItem('flowsphere-is-authenticated', 'true');
+      } else {
+        localStorage.removeItem('flowsphere-is-authenticated');
+        localStorage.removeItem('flowsphere-auth-emp-id');
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  };
 
   const addToast = (title: string, message: string, type: ToastMessage['type'] = 'info') => {
     const id = 'toast-' + Math.random().toString(36).substring(2, 9);
@@ -154,21 +241,17 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     setNotifications((prev) => [newNotif, ...prev]);
   };
 
-  // Switch role wrapper
+  // Clean setRole that adjusts navigation without overwriting the authenticated currentUser
   const setRole = (newRole: Role) => {
     setRoleState(newRole);
     if (newRole === 'admin') {
-      setCurrentUser(initialEmployees[1]); // Samta Tanwar (Admin)
       if (activeTab === 'dashboard') {
         setActiveTab('admin-overview');
       }
-      addToast('Switched to Admin Role', 'Viewing FlowSphere as Samta Tanwar (Admin / Lead Engineer)', 'info');
     } else {
-      setCurrentUser(initialEmployees[0]); // Virat Sharma (Employee)
       if (activeTab.startsWith('admin-')) {
         setActiveTab('dashboard');
       }
-      addToast('Switched to Employee View', 'Viewing FlowSphere as Virat Sharma (Employee).', 'info');
     }
   };
 
