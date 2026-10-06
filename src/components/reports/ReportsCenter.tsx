@@ -31,6 +31,7 @@ export const ReportsCenter: React.FC = () => {
 
   // Filter states
   const [reportType, setReportType] = useState('daily_productivity');
+  
   const [selectedDept, setSelectedDept] = useState('all');
   const [dateRange, setDateRange] = useState('this_week');
   const [customFrom, setCustomFrom] = useState('2026-10-01');
