@@ -13,7 +13,8 @@ import {
   AlertCircle, 
   ArrowRight,
   Filter,
-  Sparkles
+  Sparkles,
+  XCircle
 } from 'lucide-react';
 import { GlassCard } from '../common/GlassCard';
 import { StatusChip } from '../common/StatusChip';
@@ -23,7 +24,7 @@ import { useApp } from '../../context/AppContext';
 import { WorkflowTask, TaskPriority, TaskStatus, Employee } from '../../types';
 
 export const AdminWorkflowCenter: React.FC = () => {
-  const { tasks, addTask, updateTaskStatus, employees, currentUser, addToast } = useApp();
+  const { tasks, addTask, updateTaskStatus, approveTask, rejectTask, employees, currentUser, addToast } = useApp();
 
   const [isAssignModalOpen, setIsAssignModalOpen] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
@@ -31,6 +32,10 @@ export const AdminWorkflowCenter: React.FC = () => {
   const [selectedStatus, setSelectedStatus] = useState<string>('all');
   const [selectedPriority, setSelectedPriority] = useState<string>('all');
   const [selectedAssignee, setSelectedAssignee] = useState<string>('all');
+
+  // Rejection Modal State
+  const [rejectingTask, setRejectingTask] = useState<WorkflowTask | null>(null);
+  const [rejectionReason, setRejectionReason] = useState('Requires additional test coverage and documentation sync');
 
   // Assign Task Form State
   const [taskTitle, setTaskTitle] = useState('');
@@ -40,6 +45,30 @@ export const AdminWorkflowCenter: React.FC = () => {
   const [taskPriority, setTaskPriority] = useState<TaskPriority>('high');
   const [taskDueDate, setTaskDueDate] = useState('Today, 06:00 PM');
   const [taskEstimatedHours, setTaskEstimatedHours] = useState(3.0);
+
+  // Pending Approvals List
+  const pendingTasks = useMemo(() => {
+    return tasks.filter((t) => t.status === 'pending_approval');
+  }, [tasks]);
+
+  const handleApprove = (task: WorkflowTask) => {
+    approveTask(task.id, currentUser.name);
+  };
+
+  const handleOpenRejectModal = (task: WorkflowTask) => {
+    setRejectingTask(task);
+    setRejectionReason('Please update the test verification documentation before final approval.');
+  };
+
+  const handleConfirmReject = () => {
+    if (!rejectingTask) return;
+    if (!rejectionReason.trim()) {
+      addToast('Reason Required', 'Please provide a justification for sending this task back.', 'error');
+      return;
+    }
+    rejectTask(rejectingTask.id, currentUser.name, rejectionReason.trim());
+    setRejectingTask(null);
+  };
 
   // Velocity & Completion KPIs
   const kpis = useMemo(() => {
@@ -146,6 +175,8 @@ export const AdminWorkflowCenter: React.FC = () => {
     switch (status) {
       case 'completed':
         return <StatusChip status="passed" label="Completed" />;
+      case 'pending_approval':
+        return <span className="px-2 py-0.5 rounded text-[11px] font-semibold bg-[#FDE2C8] text-[#B45309] dark:bg-amber-950/50 dark:text-amber-300">Pending Review</span>;
       case 'in_progress':
         return <StatusChip status="live" label="In Progress" />;
       case 'todo':
@@ -175,6 +206,113 @@ export const AdminWorkflowCenter: React.FC = () => {
           <span>Delegate New Task</span>
         </button>
       </div>
+
+      {/* ── PENDING TASK APPROVALS SECTION ──────────────────────── */}
+      <GlassCard className="p-4 sm:p-5 border-amber-500/25">
+        <div className="flex items-center justify-between mb-3.5">
+          <div className="flex items-center gap-2.5">
+            <div className="w-8 h-8 rounded-xl bg-amber-500/10 text-amber-600 flex items-center justify-center">
+              <Clock size={17} />
+            </div>
+            <div>
+              <h3 className="text-sm sm:text-[15px] font-bold text-[#0F172A] dark:text-white flex items-center gap-2">
+                <span>Pending Sprint Task Approvals</span>
+                <span className="px-2 py-0.5 rounded-full text-xs font-semibold font-mono bg-amber-500/15 text-amber-700 dark:text-amber-300">
+                  {pendingTasks.length} Pending
+                </span>
+              </h3>
+              <p className="text-[11.5px] text-[#64748B] dark:text-[#94A3B8]">
+                Employee submitted sprint deliverables requiring managerial sign-off and milestone verification
+              </p>
+            </div>
+          </div>
+        </div>
+
+        {pendingTasks.length === 0 ? (
+          <div className="py-6 flex flex-col items-center justify-center text-center rounded-xl border border-dashed border-black/10 dark:border-white/10 text-[#94A3B8]">
+            <CheckCircle2 size={24} className="mb-1.5 text-emerald-500/80" />
+            <span className="text-xs font-semibold text-[#0F172A] dark:text-white">All sprint deliverables reviewed</span>
+            <span className="text-[11px] text-[#64748B] dark:text-[#94A3B8] mt-0.5">No employee tasks currently awaiting approval in queue.</span>
+          </div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-xs">
+              <thead>
+                <tr className="border-b border-black/5 dark:border-white/10 text-[#64748B] dark:text-[#94A3B8]">
+                  <th className="py-2 px-3 font-semibold">Sprint Task</th>
+                  <th className="py-2 px-3 font-semibold">Employee</th>
+                  <th className="py-2 px-3 font-semibold">Department</th>
+                  <th className="py-2 px-3 font-semibold">Time Logged</th>
+                  <th className="py-2 px-3 font-semibold">Submitted At</th>
+                  <th className="py-2 px-3 font-semibold text-right">Review Action</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-black/5 dark:divide-white/5">
+                {pendingTasks.map((task) => (
+                  <tr key={task.id} className="hover:bg-black/[0.02] dark:hover:bg-white/[0.02]">
+                    <td className="py-3 px-3">
+                      <div className="font-semibold text-[#0F172A] dark:text-white text-[13px]">
+                        {task.title}
+                      </div>
+                      <div className="flex items-center gap-1.5 mt-0.5">
+                        <span className="text-[10.5px] font-mono px-1.5 py-0.2 rounded bg-black/5 dark:bg-white/10 text-[#475569] dark:text-[#94A3B8]">
+                          {task.project}
+                        </span>
+                        {getPriorityBadge(task.priority)}
+                      </div>
+                    </td>
+                    <td className="py-3 px-3">
+                      <div className="flex items-center gap-2">
+                        <UserAvatar id={task.assignedTo} name={task.assignedToName} size="sm" />
+                        <div>
+                          <div className="font-semibold text-[#0F172A] dark:text-white">
+                            {task.assignedToName}
+                          </div>
+                          <div className="text-[10.5px] font-mono text-[#64748B] dark:text-[#94A3B8]">
+                            {task.assignedTo}
+                          </div>
+                        </div>
+                      </div>
+                    </td>
+                    <td className="py-3 px-3">
+                      <span className="px-2 py-0.5 rounded text-[11px] font-medium bg-black/5 dark:bg-white/10 text-[#475569] dark:text-[#94A3B8]">
+                        {task.department}
+                      </span>
+                    </td>
+                    <td className="py-3 px-3 font-mono">
+                      <span className="font-semibold text-[#0F172A] dark:text-white">{task.spentHours}h</span>
+                      <span className="text-[#64748B] dark:text-[#94A3B8]"> / {task.estimatedHours}h est</span>
+                    </td>
+                    <td className="py-3 px-3 text-[#64748B] dark:text-[#94A3B8] font-mono">
+                      {task.submittedAt || 'Today, 10:30 AM'}
+                    </td>
+                    <td className="py-3 px-3 text-right">
+                      <div className="flex items-center justify-end gap-1.5">
+                        <button
+                          type="button"
+                          onClick={() => handleApprove(task)}
+                          className="px-3 py-1.5 rounded-lg bg-[#BEF1CA] text-[#1F7A35] font-semibold hover:bg-emerald-200 text-xs flex items-center gap-1 cursor-pointer transition-colors shadow-2xs"
+                        >
+                          <CheckCircle2 size={13} />
+                          <span>Approve</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleOpenRejectModal(task)}
+                          className="px-3 py-1.5 rounded-lg bg-[#F7C9C6] text-[#B42318] font-semibold hover:bg-rose-200 text-xs flex items-center gap-1 cursor-pointer transition-colors shadow-2xs"
+                        >
+                          <XCircle size={13} />
+                          <span>Reject</span>
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </GlassCard>
 
       {/* ── 4 KPI METRICS ROW ──────────────────────────────── */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
@@ -612,6 +750,63 @@ export const AdminWorkflowCenter: React.FC = () => {
             </button>
           </div>
         </form>
+      </Modal>
+
+      {/* Task Rejection Modal */}
+      <Modal
+        isOpen={!!rejectingTask}
+        onClose={() => setRejectingTask(null)}
+        title="Request Task Revision / Reject Deliverable"
+        subtitle={`Task: "${rejectingTask?.title}" — ${rejectingTask?.assignedToName}`}
+      >
+        <div className="space-y-3.5 text-xs">
+          <div>
+            <label className="block font-medium text-[#475569] dark:text-[#94A3B8] mb-1">
+              Assigned Employee & Department
+            </label>
+            <div className="font-semibold text-sm text-[#0F172A] dark:text-white">
+              {rejectingTask?.assignedToName} ({rejectingTask?.department})
+            </div>
+            <div className="text-[11px] text-[#64748B] dark:text-[#94A3B8] mt-0.5">
+              Time logged: {rejectingTask?.spentHours}h / {rejectingTask?.estimatedHours}h
+            </div>
+          </div>
+
+          <div>
+            <label className="block font-medium text-[#475569] dark:text-[#94A3B8] mb-1">
+              Rejection Reason & Required Changes <span className="text-rose-500">*</span>
+            </label>
+            <textarea
+              rows={3}
+              required
+              value={rejectionReason}
+              onChange={(e) => setRejectionReason(e.target.value)}
+              placeholder="Explain why this sprint task is being sent back and what changes are needed..."
+              className="w-full p-3 glass-control rounded-xl text-[#0F172A] dark:text-white outline-none resize-none focus:ring-1 focus:ring-rose-400"
+            />
+            <span className="text-[10.5px] text-[#64748B] dark:text-[#94A3B8] mt-0.5 block">
+              This note will appear prominently on the employee's In Progress sprint card.
+            </span>
+          </div>
+
+          <div className="flex items-center justify-end gap-2 pt-3 border-t border-black/5 dark:border-white/10">
+            <button
+              type="button"
+              onClick={() => setRejectingTask(null)}
+              className="px-4 py-2 rounded-xl glass-control text-[#475569] hover:text-[#0F172A] font-medium cursor-pointer"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={handleConfirmReject}
+              className="px-4 py-2 rounded-xl bg-rose-500 text-white font-semibold hover:bg-rose-600 transition-colors shadow-sm cursor-pointer flex items-center gap-1.5"
+            >
+              <XCircle size={14} />
+              <span>Send Back for Revision</span>
+            </button>
+          </div>
+        </div>
       </Modal>
     </div>
   );

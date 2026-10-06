@@ -10,7 +10,8 @@ import {
   CheckSquare,
   User,
   Calendar,
-  Layers
+  Layers,
+  AlertCircle
 } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
 import { GlassCard } from '../common/GlassCard';
@@ -78,6 +79,7 @@ export const WorkflowBoard: React.FC = () => {
   const columns: { status: TaskStatus; title: string; countColor: string }[] = [
     { status: 'todo', title: 'To Do Backlog', countColor: 'bg-black/5 dark:bg-white/10 text-[#475569] dark:text-[#94A3B8]' },
     { status: 'in_progress', title: 'In Progress Sprint', countColor: 'bg-[#DBEAFE] text-[#1E40AF] dark:bg-blue-950/50 dark:text-blue-300' },
+    { status: 'pending_approval', title: 'Pending Approval', countColor: 'bg-[#FEF3C7] text-[#92400E] dark:bg-amber-950/50 dark:text-amber-300' },
     { status: 'completed', title: 'Completed Today', countColor: 'chip-success' },
   ];
 
@@ -144,8 +146,8 @@ export const WorkflowBoard: React.FC = () => {
         </div>
       </div>
 
-      {/* 3-Column Kanban Board */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-3.5">
+      {/* 4-Column Kanban Board */}
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3.5">
         {columns.map((col) => {
           const colTasks = filteredTasks.filter((t) => t.status === col.status);
           return (
@@ -187,9 +189,42 @@ export const WorkflowBoard: React.FC = () => {
                       </div>
 
                       {/* Title */}
-                      <h4 className="text-[14.5px] font-semibold text-[#0F172A] dark:text-white mb-2.5 leading-[1.38] tracking-tight">
+                      <h4 className="text-[14.5px] font-semibold text-[#0F172A] dark:text-white mb-2 leading-[1.38] tracking-tight">
                         {task.title}
                       </h4>
+
+                      {/* Rejection Alert Banner (for rejected tasks sent back to In Progress) */}
+                      {col.status === 'in_progress' && task.rejectionReason && (
+                        <div className="mb-2.5 p-2 rounded-lg bg-rose-500/10 border border-rose-500/20 text-rose-700 dark:text-rose-300 text-[11.5px] leading-tight flex items-start gap-1.5">
+                          <AlertCircle size={13} className="shrink-0 mt-0.5 text-rose-500" />
+                          <div>
+                            <span className="font-semibold block mb-0.5">Admin Note ({task.reviewedBy || 'Admin'}):</span>
+                            <span className="text-[11px]">{task.rejectionReason}</span>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Pending Approval Badge & Subtitle */}
+                      {col.status === 'pending_approval' && (
+                        <div className="mb-2.5 p-2 rounded-lg bg-amber-500/10 border border-amber-500/20 text-[#B45309] dark:text-amber-300 text-[11.5px] leading-tight flex items-center justify-between">
+                          <span className="font-semibold flex items-center gap-1.5">
+                            <Clock size={12} className="text-amber-500" />
+                            Pending Admin Review
+                          </span>
+                          <span className="text-[10.5px] opacity-80 font-mono">
+                            {task.submittedAt || 'Submitted recently'}
+                          </span>
+                        </div>
+                      )}
+
+                      {/* Completed Details */}
+                      {col.status === 'completed' && task.reviewedBy && (
+                        <div className="mb-2.5 px-2 py-1 rounded-lg bg-emerald-500/10 border border-emerald-500/20 text-[#1F7A35] dark:text-emerald-300 text-[11px] flex items-center gap-1 font-medium">
+                          <CheckCircle2 size={12} />
+                          <span>Approved by {task.reviewedBy}</span>
+                          {task.reviewedAt && <span className="text-[10px] opacity-75 font-mono ml-auto">{task.reviewedAt}</span>}
+                        </div>
+                      )}
 
                       {/* Progress Bar */}
                       <div className="space-y-1.5 mb-3">
@@ -205,6 +240,8 @@ export const WorkflowBoard: React.FC = () => {
                             className={`h-full rounded-full ${
                               task.status === 'completed'
                                 ? 'bg-[#288F3D]'
+                                : task.status === 'pending_approval'
+                                ? 'bg-[#D97706]'
                                 : 'bg-[#158AF4]'
                             }`}
                           />
@@ -232,36 +269,57 @@ export const WorkflowBoard: React.FC = () => {
 
                       {/* Quick Action Transition Buttons */}
                       <div className="mt-2.5 pt-2.5 border-t border-dashed border-black/5 dark:border-white/10 flex items-center justify-between gap-1.5">
-                        {col.status !== 'todo' && (
-                          <button
-                            type="button"
-                            onClick={() => updateTaskStatus(task.id, 'todo')}
-                            className="text-[11px] px-2.5 py-1 rounded glass-control text-[#475569] dark:text-[#94A3B8] hover:text-[#0F172A] dark:hover:text-white font-medium transition-colors flex items-center gap-1"
-                          >
-                            <ArrowLeft size={11} />
-                            <span>To Do</span>
-                          </button>
-                        )}
-
-                        {col.status !== 'in_progress' && (
+                        {col.status === 'todo' && (
                           <button
                             type="button"
                             onClick={() => updateTaskStatus(task.id, 'in_progress')}
-                            className="text-[11px] px-2.5 py-1 rounded bg-[#DBEAFE] text-[#1E40AF] dark:bg-blue-950/50 dark:text-blue-300 font-semibold transition-colors flex items-center gap-1"
+                            className="text-[11px] px-2.5 py-1 rounded bg-[#DBEAFE] text-[#1E40AF] dark:bg-blue-950/50 dark:text-blue-300 font-semibold transition-colors flex items-center gap-1 ml-auto cursor-pointer hover:bg-blue-200 dark:hover:bg-blue-900"
                           >
                             <span>Start Work</span>
                             <ArrowRight size={11} />
                           </button>
                         )}
 
-                        {col.status !== 'completed' && (
+                        {col.status === 'in_progress' && (
+                          <>
+                            <button
+                              type="button"
+                              onClick={() => updateTaskStatus(task.id, 'todo')}
+                              className="text-[11px] px-2.5 py-1 rounded glass-control text-[#475569] dark:text-[#94A3B8] hover:text-[#0F172A] dark:hover:text-white font-medium transition-colors flex items-center gap-1 cursor-pointer"
+                            >
+                              <ArrowLeft size={11} />
+                              <span>To Do</span>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => updateTaskStatus(task.id, 'pending_approval')}
+                              className="text-[11px] px-2.5 py-1 rounded bg-[#FEF3C7] text-[#92400E] dark:bg-amber-950/50 dark:text-amber-300 font-semibold transition-colors flex items-center gap-1 cursor-pointer hover:bg-amber-200 dark:hover:bg-amber-900"
+                            >
+                              <span>Submit for Approval</span>
+                              <ArrowRight size={11} />
+                            </button>
+                          </>
+                        )}
+
+                        {col.status === 'pending_approval' && (
                           <button
                             type="button"
-                            onClick={() => updateTaskStatus(task.id, 'completed')}
-                            className="text-[11px] px-2.5 py-1 rounded bg-[#BEF1CA] text-[#1F7A35] dark:bg-emerald-950/50 dark:text-emerald-300 font-semibold transition-colors flex items-center gap-1"
+                            onClick={() => updateTaskStatus(task.id, 'in_progress')}
+                            className="text-[11px] px-2.5 py-1 rounded glass-control text-[#475569] dark:text-[#94A3B8] hover:text-[#0F172A] dark:hover:text-white font-medium transition-colors flex items-center gap-1 cursor-pointer"
                           >
-                            <CheckCircle2 size={11} />
-                            <span>Mark Done</span>
+                            <ArrowLeft size={11} />
+                            <span>Withdraw (In Progress)</span>
+                          </button>
+                        )}
+
+                        {col.status === 'completed' && (
+                          <button
+                            type="button"
+                            onClick={() => updateTaskStatus(task.id, 'todo')}
+                            className="text-[11px] px-2.5 py-1 rounded glass-control text-[#475569] dark:text-[#94A3B8] hover:text-[#0F172A] dark:hover:text-white font-medium transition-colors flex items-center gap-1 cursor-pointer"
+                          >
+                            <ArrowLeft size={11} />
+                            <span>Reopen</span>
                           </button>
                         )}
                       </div>

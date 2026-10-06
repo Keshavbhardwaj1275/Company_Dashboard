@@ -112,7 +112,7 @@ async function runComprehensiveCheck() {
     console.log('\n7️⃣ Testing Reports & Export Center...');
     await page.locator('header nav button[aria-label="Reports"]').click();
     await page.waitForSelector('text=Reports & Export Intelligence', { timeout: 5000 });
-    await page.waitForSelector('text=Weekly Audit Summary', { timeout: 5000 });
+    await page.waitForSelector('text=Report Category', { timeout: 5000 });
     console.log('   ✓ Reports & Export view verified.');
 
     // 8. Notifications Center

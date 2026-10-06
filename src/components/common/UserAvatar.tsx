@@ -42,7 +42,7 @@ export const UserAvatar: React.FC<UserAvatarProps> = ({
   const paletteIndex = Math.abs(hash) % CORPORATE_PALETTES.length;
   const palette = CORPORATE_PALETTES[paletteIndex];
 
-  // Extract initials (e.g., "Keshav Bhardwaj" -> "KB")
+  // Extract initials (e.g., "Virat Sharma" -> "VS")
   const getInitials = (n: string) => {
     if (!n.trim()) return '';
     const parts = n.trim().split(/\s+/);

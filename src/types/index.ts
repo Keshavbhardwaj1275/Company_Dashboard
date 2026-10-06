@@ -7,6 +7,8 @@ export interface Employee {
   employeeId: string;
   name: string;
   email: string;
+  loginId?: string;
+  password?: string;
   avatar: string;
   department: 'Engineering' | 'Design' | 'Product' | 'Marketing' | 'HR' | 'Finance' | 'Operations';
   role: string;
@@ -44,7 +46,7 @@ export interface WorkSession {
   lastHeartbeat: Date;
 }
 
-export type TaskStatus = 'todo' | 'in_progress' | 'completed';
+export type TaskStatus = 'todo' | 'in_progress' | 'pending_approval' | 'completed';
 export type TaskPriority = 'low' | 'medium' | 'high' | 'urgent';
 
 export interface WorkflowTask {
@@ -63,6 +65,10 @@ export interface WorkflowTask {
   spentHours: number;
   progress: number;
   timeSlot?: string;
+  submittedAt?: string;
+  reviewedAt?: string;
+  reviewedBy?: string;
+  rejectionReason?: string;
 }
 
 export interface AttendanceDay {

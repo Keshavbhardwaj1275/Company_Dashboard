@@ -199,15 +199,15 @@ export const PolicyRulesView: React.FC = () => {
       </div>
 
       {/* Top Split Layout: Calculation Parameters (Left 8) + Formula Specification (Right 4) */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 items-stretch">
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 items-start">
         {/* Left 8 Cols (~70%): Parameters Form */}
-        <div className="lg:col-span-8 flex">
-          <GlassCard className="p-4 sm:p-5 w-full flex flex-col justify-between">
+        <div className="lg:col-span-8 flex flex-col">
+          <GlassCard className="p-5 sm:p-6 w-full flex flex-col">
             <form onSubmit={handleSave} className="space-y-4">
-              <div className="flex items-center justify-between pb-2.5 border-b border-black/5 dark:border-white/10">
+              <div className="flex items-center justify-between pb-3 border-b border-black/5 dark:border-white/10">
                 <div className="flex items-center gap-2">
                   <Sliders size={16} className="text-[#158AF4]" />
-                  <h3 className="text-sm font-bold text-[#0F172A] dark:text-white">
+                  <h3 className="text-sm sm:text-base font-bold text-[#0F172A] dark:text-white">
                     Automated Calculation Parameters
                   </h3>
                 </div>
@@ -221,15 +221,12 @@ export const PolicyRulesView: React.FC = () => {
               </div>
 
               {/* 2-Column Responsive Grid for Core 4 Controls */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-3.5">
                 {/* Control 1: Standard Daily Shift (Hours) */}
                 <div>
-                  <label className="block text-xs font-semibold text-[#0F172A] dark:text-white mb-0.5">
+                  <label className="block text-xs font-semibold text-[#0F172A] dark:text-white mb-1">
                     Standard Daily Shift (Hours)
                   </label>
-                  <p className="text-[11px] text-[#64748B] dark:text-[#94A3B8] mb-1.5 leading-tight">
-                    Minimum active hours required per shift
-                  </p>
                   <input
                     type="number"
                     id="input-shift-hours"
@@ -238,7 +235,7 @@ export const PolicyRulesView: React.FC = () => {
                     max="24"
                     value={minHours}
                     onChange={(e) => setMinHours(e.target.value)}
-                    className={`w-full h-10 px-3 text-xs glass-control rounded-xl text-[#0F172A] dark:text-white outline-none font-mono transition-colors ${
+                    className={`w-full h-9 px-3 text-xs glass-control rounded-xl text-[#0F172A] dark:text-white outline-none font-mono transition-colors ${
                       shiftHoursError ? 'border-rose-400 ring-1 ring-rose-400 bg-rose-50/20' : ''
                     }`}
                   />
@@ -248,20 +245,17 @@ export const PolicyRulesView: React.FC = () => {
                       <span>{shiftHoursError}</span>
                     </span>
                   ) : (
-                    <span className="text-[10.5px] text-[#64748B] dark:text-[#94A3B8] mt-1 block">
+                    <p className="text-[10.5px] text-[#64748B] dark:text-[#94A3B8] mt-1 leading-tight">
                       Configured standard: {shiftHoursNum}h productive time
-                    </span>
+                    </p>
                   )}
                 </div>
 
                 {/* Control 2: Allowed Idle Duration (Mins / Day) */}
                 <div>
-                  <label className="block text-xs font-semibold text-[#0F172A] dark:text-white mb-0.5">
+                  <label className="block text-xs font-semibold text-[#0F172A] dark:text-white mb-1">
                     Allowed Idle Duration (Mins / Day)
                   </label>
-                  <p className="text-[11px] text-[#64748B] dark:text-[#94A3B8] mb-1.5 leading-tight">
-                    Permitted idle allowance before payroll/attendance deduction
-                  </p>
                   <input
                     type="number"
                     id="input-allowed-idle"
@@ -270,7 +264,7 @@ export const PolicyRulesView: React.FC = () => {
                     max="720"
                     value={allowedIdle}
                     onChange={(e) => setAllowedIdle(e.target.value)}
-                    className={`w-full h-10 px-3 text-xs glass-control rounded-xl text-[#0F172A] dark:text-white outline-none font-mono transition-colors ${
+                    className={`w-full h-9 px-3 text-xs glass-control rounded-xl text-[#0F172A] dark:text-white outline-none font-mono transition-colors ${
                       allowedIdleError ? 'border-rose-400 ring-1 ring-rose-400 bg-rose-50/20' : ''
                     }`}
                   />
@@ -280,25 +274,22 @@ export const PolicyRulesView: React.FC = () => {
                       <span>{allowedIdleError}</span>
                     </span>
                   ) : (
-                    <span className="text-[10.5px] text-[#64748B] dark:text-[#94A3B8] mt-1 block">
+                    <p className="text-[10.5px] text-[#64748B] dark:text-[#94A3B8] mt-1 leading-tight">
                       Max permitted: {allowedIdleNum} mins/day before LOP deduction
-                    </span>
+                    </p>
                   )}
                 </div>
 
                 {/* Control 3: Idle Inactivity Detection Trigger */}
                 <div>
-                  <label className="block text-xs font-semibold text-[#0F172A] dark:text-white mb-0.5">
+                  <label className="block text-xs font-semibold text-[#0F172A] dark:text-white mb-1">
                     Idle Inactivity Detection Trigger
                   </label>
-                  <p className="text-[11px] text-[#64748B] dark:text-[#94A3B8] mb-1.5 leading-tight">
-                    Inactivity window before auto-pausing productive timer
-                  </p>
                   <select
                     id="select-idle-trigger"
                     value={idleThreshold}
                     onChange={(e) => setIdleThreshold(Number(e.target.value))}
-                    className="w-full h-10 px-3 text-xs glass-control rounded-xl text-[#0F172A] dark:text-white outline-none font-medium transition-colors cursor-pointer"
+                    className="w-full h-9 px-3 text-xs glass-control rounded-xl text-[#0F172A] dark:text-white outline-none font-medium transition-colors cursor-pointer"
                   >
                     <option value={1}>1 Minute (Ultra Strict)</option>
                     <option value={3}>3 Minutes (Strict Monitoring)</option>
@@ -307,24 +298,21 @@ export const PolicyRulesView: React.FC = () => {
                     <option value={15}>15 Minutes (Extended Window)</option>
                     <option value={30}>30 Minutes (Relaxed)</option>
                   </select>
-                  <span className="text-[10.5px] text-[#64748B] dark:text-[#94A3B8] mt-1 block">
+                  <p className="text-[10.5px] text-[#64748B] dark:text-[#94A3B8] mt-1 leading-tight">
                     Productive timer pauses after {idleThreshold}m of continuous inactivity
-                  </span>
+                  </p>
                 </div>
 
                 {/* Control 4: Morning Check-in Grace Period */}
                 <div>
-                  <label className="block text-xs font-semibold text-[#0F172A] dark:text-white mb-0.5">
+                  <label className="block text-xs font-semibold text-[#0F172A] dark:text-white mb-1">
                     Morning Check-in Grace Period
                   </label>
-                  <p className="text-[11px] text-[#64748B] dark:text-[#94A3B8] mb-1.5 leading-tight">
-                    Grace window after shift start (09:00 AM) before marked Late
-                  </p>
                   <select
                     id="select-grace-period"
                     value={gracePeriod}
                     onChange={(e) => setGracePeriod(Number(e.target.value))}
-                    className="w-full h-10 px-3 text-xs glass-control rounded-xl text-[#0F172A] dark:text-white outline-none font-medium transition-colors cursor-pointer"
+                    className="w-full h-9 px-3 text-xs glass-control rounded-xl text-[#0F172A] dark:text-white outline-none font-medium transition-colors cursor-pointer"
                   >
                     <option value={5}>5 Minutes (Strict)</option>
                     <option value={10}>10 Minutes (Moderate)</option>
@@ -332,15 +320,15 @@ export const PolicyRulesView: React.FC = () => {
                     <option value={20}>20 Minutes (Extended)</option>
                     <option value={30}>30 Minutes (Generous)</option>
                   </select>
-                  <span className="text-[10.5px] text-[#64748B] dark:text-[#94A3B8] mt-1 block">
+                  <p className="text-[10.5px] text-[#64748B] dark:text-[#94A3B8] mt-1 leading-tight">
                     Logins after 09:{gracePeriod < 10 ? '0' + gracePeriod : gracePeriod} AM classified as Late
-                  </span>
+                  </p>
                 </div>
               </div>
 
               {/* Shift Schedule Window Row */}
               <div className="pt-3 border-t border-black/5 dark:border-white/10">
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
                   <div>
                     <label className="block text-xs font-semibold text-[#0F172A] dark:text-white">
                       Shift Schedule Window
@@ -354,14 +342,14 @@ export const PolicyRulesView: React.FC = () => {
                       type="text"
                       value={shiftStart}
                       onChange={(e) => setShiftStart(e.target.value)}
-                      className="w-28 h-9 px-2.5 text-xs glass-control rounded-xl text-[#0F172A] dark:text-white outline-none font-mono text-center"
+                      className="w-28 h-8 px-2.5 text-xs glass-control rounded-xl text-[#0F172A] dark:text-white outline-none font-mono text-center"
                     />
                     <span className="text-xs text-[#94A3B8] font-semibold">–</span>
                     <input
                       type="text"
                       value={shiftEnd}
                       onChange={(e) => setShiftEnd(e.target.value)}
-                      className="w-28 h-9 px-2.5 text-xs glass-control rounded-xl text-[#0F172A] dark:text-white outline-none font-mono text-center"
+                      className="w-28 h-8 px-2.5 text-xs glass-control rounded-xl text-[#0F172A] dark:text-white outline-none font-mono text-center"
                     />
                   </div>
                 </div>
@@ -376,7 +364,7 @@ export const PolicyRulesView: React.FC = () => {
               )}
             </form>
 
-            <div className="pt-3 mt-3 border-t border-black/5 dark:border-white/10 flex items-center justify-between text-[11px] text-[#64748B] dark:text-[#94A3B8]">
+            <div className="pt-2.5 mt-3 border-t border-black/5 dark:border-white/10 flex flex-col sm:flex-row sm:items-center justify-between gap-1 text-[11px] text-[#64748B] dark:text-[#94A3B8]">
               <span>Changes take effect immediately across all workspace sessions and reports.</span>
               <span className="font-mono">Policy ID: POL-2026-V2</span>
             </div>
@@ -384,29 +372,29 @@ export const PolicyRulesView: React.FC = () => {
         </div>
 
         {/* Right 4 Cols (~30%): Formula Specification Card */}
-        <div className="lg:col-span-4 flex">
-          <GlassCard className="p-4 sm:p-5 w-full flex flex-col justify-between">
-            <div className="space-y-3.5">
-              <div className="flex items-center gap-2 pb-2 border-b border-black/5 dark:border-white/10">
+        <div className="lg:col-span-4 flex flex-col">
+          <GlassCard className="p-5 sm:p-6 w-full flex flex-col">
+            <div className="space-y-3">
+              <div className="flex items-center gap-2 pb-2.5 border-b border-black/5 dark:border-white/10">
                 <ShieldCheck size={16} className="text-[#288F3D]" />
-                <h3 className="text-sm font-bold text-[#0F172A] dark:text-white">
+                <h3 className="text-sm sm:text-base font-bold text-[#0F172A] dark:text-white">
                   Formula Specification
                 </h3>
               </div>
 
               {/* High-Contrast Readable Formula Box */}
-              <div className="p-3.5 rounded-xl bg-white/95 dark:bg-slate-800/95 border border-slate-200 dark:border-slate-700 shadow-sm text-xs font-mono text-[#0F172A] dark:text-white leading-relaxed font-bold">
+              <div className="p-3 rounded-xl bg-white/95 dark:bg-slate-800/95 border border-slate-200 dark:border-slate-700 shadow-sm text-xs font-mono text-[#0F172A] dark:text-white leading-relaxed font-bold">
                 Total Login - Idle - Break = Productive Hours
               </div>
 
               {/* Dynamic Explanations */}
-              <div className="space-y-2.5 text-xs text-[#475569] dark:text-[#94A3B8]">
+              <div className="space-y-2 text-xs text-[#475569] dark:text-[#94A3B8]">
                 <div className="p-2.5 rounded-xl bg-slate-50/70 dark:bg-slate-800/40 border border-slate-200/50 dark:border-slate-700/40">
                   <strong className="text-[#0F172A] dark:text-white block mb-0.5">
                     • Shift Expectation
                   </strong>
-                  <p className="text-[11.5px] leading-relaxed">
-                    Standard daily shift requires <strong>{shiftHoursNum}</strong> productive active hours.
+                  <p className="text-[11px] leading-relaxed">
+                    Standard daily shift requires <strong>{shiftHoursNum}h</strong> productive active hours.
                   </p>
                 </div>
 
@@ -414,7 +402,7 @@ export const PolicyRulesView: React.FC = () => {
                   <strong className="text-[#0F172A] dark:text-white block mb-0.5">
                     • Idle Pausing Trigger
                   </strong>
-                  <p className="text-[11.5px] leading-relaxed">
+                  <p className="text-[11px] leading-relaxed">
                     Productive timer pauses automatically when continuous inactivity reaches <strong>{idleThreshold} minutes</strong>.
                   </p>
                 </div>
@@ -423,7 +411,7 @@ export const PolicyRulesView: React.FC = () => {
                   <strong className="text-[#0F172A] dark:text-white block mb-0.5">
                     • Payroll & Inactivity Rule
                   </strong>
-                  <p className="text-[11.5px] leading-relaxed">
+                  <p className="text-[11px] leading-relaxed">
                     Idle duration exceeding <strong>{allowedIdleNum} minutes/day</strong> triggers configured Loss of Pay (LOP) payroll deduction.
                   </p>
                 </div>
@@ -432,7 +420,7 @@ export const PolicyRulesView: React.FC = () => {
                   <strong className="text-[#0F172A] dark:text-white block mb-0.5">
                     • Morning Grace Window
                   </strong>
-                  <p className="text-[11.5px] leading-relaxed">
+                  <p className="text-[11px] leading-relaxed">
                     Logins within <strong>{gracePeriod} minutes</strong> of {shiftStart} (until 09:{gracePeriod < 10 ? '0' + gracePeriod : gracePeriod} AM) are marked On-Time.
                   </p>
                 </div>

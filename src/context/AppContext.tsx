@@ -39,6 +39,8 @@ interface AppContextType {
   tasks: WorkflowTask[];
   updateTaskStatus: (taskId: string, newStatus: TaskStatus) => void;
   addTask: (task: Omit<WorkflowTask, 'id'>) => void;
+  approveTask: (taskId: string, adminName: string) => void;
+  rejectTask: (taskId: string, adminName: string, reason: string) => void;
   notifications: NotificationItem[];
   markNotificationAsRead: (id: string) => void;
   clearAllNotifications: () => void;
@@ -103,7 +105,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false);
   const [theme, setThemeState] = useState<'light' | 'dark'>('light');
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
-  const [isAuthenticated, setIsAuthenticated] = useState(true);
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
 
   // Login attempt restrictions state
   const [loginAttempts, setLoginAttempts] = useState(0);
@@ -162,15 +164,11 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       }
       addToast('Switched to Admin Role', 'Viewing FlowSphere as Samta Tanwar (Admin / Lead Engineer)', 'info');
     } else {
-      if (currentUser.seedRole === 'admin') {
-        setCurrentUser({ ...initialEmployees[1], systemRole: 'employee', seedRole: 'admin' });
-      } else {
-        setCurrentUser(initialEmployees[0]); // Keshav Bhardwaj (Employee)
-      }
+      setCurrentUser(initialEmployees[0]); // Virat Sharma (Employee)
       if (activeTab.startsWith('admin-')) {
         setActiveTab('dashboard');
       }
-      addToast('Switched to Employee View', 'Viewing FlowSphere in Employee mode.', 'info');
+      addToast('Switched to Employee View', 'Viewing FlowSphere as Virat Sharma (Employee).', 'info');
     }
   };
 
@@ -388,13 +386,89 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     setTasks((prev) =>
       prev.map((t) => {
         if (t.id === taskId) {
-          const progress = newStatus === 'completed' ? 100 : newStatus === 'in_progress' ? 65 : 0;
-          return { ...t, status: newStatus, progress };
+          const progress =
+            newStatus === 'completed'
+              ? 100
+              : newStatus === 'pending_approval'
+              ? 90
+              : newStatus === 'in_progress'
+              ? 65
+              : 0;
+          return {
+            ...t,
+            status: newStatus,
+            progress,
+            submittedAt: newStatus === 'pending_approval' ? 'Just now' : t.submittedAt,
+          };
         }
         return t;
       })
     );
-    addToast('Task Status Updated', `Sprint milestone moved to ${newStatus.replace('_', ' ').toUpperCase()}`, 'success');
+    if (newStatus === 'pending_approval') {
+      addNotification({
+        title: 'Task Submitted for Review',
+        message: 'Your sprint task has been submitted for admin approval.',
+        type: 'info',
+        category: 'productivity',
+      });
+      addToast('Submitted for Review', 'Sprint milestone sent to admin for approval.', 'info');
+    } else {
+      addToast('Task Status Updated', `Sprint milestone moved to ${newStatus.replace('_', ' ').toUpperCase()}`, 'success');
+    }
+  };
+
+  const approveTask = (taskId: string, adminName: string) => {
+    setTasks((prev) =>
+      prev.map((t) =>
+        t.id === taskId
+          ? {
+              ...t,
+              status: 'completed' as TaskStatus,
+              progress: 100,
+              reviewedAt: 'Just now',
+              reviewedBy: adminName,
+              rejectionReason: undefined,
+            }
+          : t
+      )
+    );
+    const task = tasks.find((t) => t.id === taskId);
+    if (task) {
+      addNotification({
+        title: 'Task Approved',
+        message: `Your task "${task.title}" was approved by ${adminName}.`,
+        type: 'success',
+        category: 'productivity',
+      });
+      addToast('Task Approved', `"${task.title}" was approved by ${adminName}.`, 'success');
+    }
+  };
+
+  const rejectTask = (taskId: string, adminName: string, reason: string) => {
+    setTasks((prev) =>
+      prev.map((t) =>
+        t.id === taskId
+          ? {
+              ...t,
+              status: 'in_progress' as TaskStatus,
+              reviewedAt: 'Just now',
+              reviewedBy: adminName,
+              rejectionReason: reason,
+              progress: 60,
+            }
+          : t
+      )
+    );
+    const task = tasks.find((t) => t.id === taskId);
+    if (task) {
+      addNotification({
+        title: 'Task Revision Required',
+        message: `Your task "${task.title}" was sent back: ${reason}`,
+        type: 'warning',
+        category: 'productivity',
+      });
+      addToast('Task Revision Requested', `"${task.title}" sent back for revision: ${reason}`, 'warning');
+    }
   };
 
   const addTask = (taskData: Omit<WorkflowTask, 'id'>) => {
@@ -547,6 +621,8 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         tasks,
         updateTaskStatus,
         addTask,
+        approveTask,
+        rejectTask,
         notifications,
         markNotificationAsRead,
         clearAllNotifications,

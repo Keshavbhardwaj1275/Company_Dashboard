@@ -25,6 +25,7 @@ export const AuthView: React.FC = () => {
     setRole, 
     setCurrentUser,
     addToast,
+    employees,
     loginAttempts,
     incrementLoginAttempts,
     resetLoginAttempts,
@@ -35,8 +36,8 @@ export const AuthView: React.FC = () => {
   const [authMode, setAuthMode] = useState<AuthMode>('signin');
   
   // Sign-in state
-  const [emailOrId, setEmailOrId] = useState('FS-1001');
-  const [password, setPassword] = useState('FlowSphere@2026');
+  const [emailOrId, setEmailOrId] = useState('');
+  const [password, setPassword] = useState('');
   const [rememberSession, setRememberSession] = useState(true);
   const [signInError, setSignInError] = useState('');
 
@@ -68,47 +69,27 @@ export const AuthView: React.FC = () => {
     }
 
     if (!emailOrId.trim() || !password.trim()) {
-      setSignInError('Please enter both Employee ID / Email and Password.');
+      setSignInError('Please enter both Login ID and Password.');
       return;
     }
 
-    // Simulated verification: Valid credentials
-    const isKeshav = emailOrId.toLowerCase().includes('1001') || emailOrId.toLowerCase().includes('keshav');
-    const isAdmin = emailOrId.toLowerCase().includes('1002') || emailOrId.toLowerCase().includes('samta') || emailOrId.toLowerCase().includes('admin');
+    const account = employees.find(
+      (e) =>
+        e.loginId?.toLowerCase() === emailOrId.trim().toLowerCase() ||
+        e.email?.toLowerCase() === emailOrId.trim().toLowerCase()
+    );
 
-    if (password.length < 4) {
+    if (!account || account.password !== password) {
       incrementLoginAttempts();
-      setSignInError(`Incorrect password. Attempt ${loginAttempts + 1} of 3 before temporary lockout.`);
+      setSignInError(`Incorrect Login ID or password. Attempt ${loginAttempts + 1} of 3 before temporary lockout.`);
       return;
     }
 
     resetLoginAttempts();
     setIsAuthenticated(true);
-    if (isAdmin) {
-      setCurrentUser(initialEmployees[1]);
-      setRole('admin');
-      addToast('Welcome Admin', 'Authenticated as Samta Tanwar (Lead Full-Stack / Admin).', 'success');
-    } else {
-      setCurrentUser(initialEmployees[0]);
-      setRole('employee');
-      addToast('Welcome to FlowSphere', 'Authenticated as Keshav Bhardwaj (Senior Architect).', 'success');
-    }
-  };
-
-  const handleQuickEmployee = () => {
-    resetLoginAttempts();
-    setCurrentUser(initialEmployees[0]);
-    setIsAuthenticated(true);
-    setRole('employee');
-    addToast('Employee Session Started', 'Logged in as Keshav Bhardwaj (Senior Architect).', 'success');
-  };
-
-  const handleQuickAdmin = () => {
-    resetLoginAttempts();
-    setCurrentUser(initialEmployees[1]);
-    setIsAuthenticated(true);
-    setRole('admin');
-    addToast('Admin Session Started', 'Logged in as Samta Tanwar (Lead Full-Stack / Admin).', 'success');
+    setRole(account.systemRole || (account.seedRole === 'admin' ? 'admin' : 'employee'));
+    setCurrentUser(account);
+    addToast('Welcome back', `Signed in as ${account.name}.`, 'success');
   };
 
   // First Time Setup Handlers
@@ -343,7 +324,7 @@ export const AuthView: React.FC = () => {
 
               <div>
                 <label className="block text-[13px] font-medium leading-[1.4] text-[#171717] dark:text-[#EDEDED] mb-1.5">
-                  Official Email or Employee ID
+                  Login ID
                 </label>
                 <div className="relative">
                   <User size={16} className="absolute left-3.5 top-1/2 transform -translate-y-1/2 text-[#8A8A8A]" />
@@ -353,8 +334,7 @@ export const AuthView: React.FC = () => {
                     onChange={(e) => setEmailOrId(e.target.value)}
                     required
                     disabled={isLockedOut}
-                    placeholder="e.g. FS-1001 or name@flowsphere.internal"
-                    className="w-full pl-10 pr-3.5 py-2.5 text-[14px] font-normal leading-[1.5] text-[#171717] dark:text-white placeholder-[#8A8A8A] bg-white dark:bg-[#1E293B] border border-black/15 dark:border-white/20 rounded-xl outline-none focus:ring-2 focus:ring-[#FFE956]/60 focus:border-[#FFE956] disabled:opacity-60 transition-all shadow-2xs"
+                    className="w-full pl-10 pr-3.5 py-2.5 text-[14px] font-normal leading-[1.5] text-[#171717] dark:text-white bg-white dark:bg-[#1E293B] border border-black/15 dark:border-white/20 rounded-xl outline-none focus:ring-2 focus:ring-[#FFE956]/60 focus:border-[#FFE956] disabled:opacity-60 transition-all shadow-2xs"
                   />
                 </div>
               </div>
@@ -384,8 +364,7 @@ export const AuthView: React.FC = () => {
                     onChange={(e) => setPassword(e.target.value)}
                     required
                     disabled={isLockedOut}
-                    placeholder="••••••••••••"
-                    className="w-full pl-10 pr-3.5 py-2.5 text-[14px] font-normal leading-[1.5] text-[#171717] dark:text-white placeholder-[#8A8A8A] bg-white dark:bg-[#1E293B] border border-black/15 dark:border-white/20 rounded-xl outline-none focus:ring-2 focus:ring-[#FFE956]/60 focus:border-[#FFE956] disabled:opacity-60 transition-all shadow-2xs"
+                    className="w-full pl-10 pr-3.5 py-2.5 text-[14px] font-normal leading-[1.5] text-[#171717] dark:text-white bg-white dark:bg-[#1E293B] border border-black/15 dark:border-white/20 rounded-xl outline-none focus:ring-2 focus:ring-[#FFE956]/60 focus:border-[#FFE956] disabled:opacity-60 transition-all shadow-2xs"
                   />
                 </div>
               </div>
@@ -452,8 +431,7 @@ export const AuthView: React.FC = () => {
                         value={setupEmail}
                         onChange={(e) => setSetupEmail(e.target.value)}
                         required
-                        placeholder="e.g. keshav.b@flowsphere.internal"
-                        className="w-full pl-10 pr-3.5 py-2.5 text-[14px] font-normal leading-[1.5] text-[#171717] dark:text-white placeholder-[#8A8A8A] bg-white dark:bg-[#1E293B] border border-black/15 dark:border-white/20 rounded-xl outline-none focus:ring-2 focus:ring-[#FFE956]/60 focus:border-[#FFE956] transition-all shadow-2xs"
+                        className="w-full pl-10 pr-3.5 py-2.5 text-[14px] font-normal leading-[1.5] text-[#171717] dark:text-white bg-white dark:bg-[#1E293B] border border-black/15 dark:border-white/20 rounded-xl outline-none focus:ring-2 focus:ring-[#FFE956]/60 focus:border-[#FFE956] transition-all shadow-2xs"
                       />
                     </div>
                   </div>
@@ -487,7 +465,6 @@ export const AuthView: React.FC = () => {
                       maxLength={6}
                       value={setupOtp}
                       onChange={(e) => setSetupOtp(e.target.value)}
-                      placeholder="582910"
                       required
                       className="w-full px-3.5 py-2.5 text-center text-[16px] font-mono tracking-widest text-[#171717] dark:text-white bg-white dark:bg-[#1E293B] border border-black/15 dark:border-white/20 rounded-xl outline-none focus:ring-2 focus:ring-[#FFE956]/60 focus:border-[#FFE956] transition-all shadow-2xs"
                     />
@@ -526,8 +503,7 @@ export const AuthView: React.FC = () => {
                         value={setupPassword}
                         onChange={(e) => setSetupPassword(e.target.value)}
                         required
-                        placeholder="••••••••••••"
-                        className="w-full pl-10 pr-3.5 py-2.5 text-[14px] font-normal leading-[1.5] text-[#171717] dark:text-white placeholder-[#8A8A8A] bg-white dark:bg-[#1E293B] border border-black/15 dark:border-white/20 rounded-xl outline-none focus:ring-2 focus:ring-[#FFE956]/60 focus:border-[#FFE956] transition-all shadow-2xs"
+                        className="w-full pl-10 pr-3.5 py-2.5 text-[14px] font-normal leading-[1.5] text-[#171717] dark:text-white bg-white dark:bg-[#1E293B] border border-black/15 dark:border-white/20 rounded-xl outline-none focus:ring-2 focus:ring-[#FFE956]/60 focus:border-[#FFE956] transition-all shadow-2xs"
                       />
                     </div>
                   </div>
@@ -543,8 +519,7 @@ export const AuthView: React.FC = () => {
                         value={setupConfirmPassword}
                         onChange={(e) => setSetupConfirmPassword(e.target.value)}
                         required
-                        placeholder="••••••••••••"
-                        className="w-full pl-10 pr-3.5 py-2.5 text-[14px] font-normal leading-[1.5] text-[#171717] dark:text-white placeholder-[#8A8A8A] bg-white dark:bg-[#1E293B] border border-black/15 dark:border-white/20 rounded-xl outline-none focus:ring-2 focus:ring-[#FFE956]/60 focus:border-[#FFE956] transition-all shadow-2xs"
+                        className="w-full pl-10 pr-3.5 py-2.5 text-[14px] font-normal leading-[1.5] text-[#171717] dark:text-white bg-white dark:bg-[#1E293B] border border-black/15 dark:border-white/20 rounded-xl outline-none focus:ring-2 focus:ring-[#FFE956]/60 focus:border-[#FFE956] transition-all shadow-2xs"
                       />
                     </div>
                   </div>
@@ -578,7 +553,7 @@ export const AuthView: React.FC = () => {
                     onClick={() => {
                       setIsAuthenticated(true);
                       setRole('employee');
-                      addToast('Welcome to FlowSphere', 'Logged in as Keshav Bhardwaj.', 'success');
+                      addToast('Welcome to FlowSphere', 'Logged in as Virat Sharma.', 'success');
                     }}
                     className="btn-yellow w-full py-2.5 rounded-xl text-[14px] font-semibold tracking-[-0.005em] flex items-center justify-center gap-2 shadow-sm cursor-pointer"
                   >
@@ -628,8 +603,7 @@ export const AuthView: React.FC = () => {
                         value={forgotEmail}
                         onChange={(e) => setForgotEmail(e.target.value)}
                         required
-                        placeholder="e.g. keshav.b@flowsphere.internal"
-                        className="w-full pl-10 pr-3.5 py-2.5 text-[14px] font-normal leading-[1.5] text-[#171717] dark:text-white placeholder-[#8A8A8A] bg-white dark:bg-[#1E293B] border border-black/15 dark:border-white/20 rounded-xl outline-none focus:ring-2 focus:ring-[#FFE956]/60 focus:border-[#FFE956] transition-all shadow-2xs"
+                        className="w-full pl-10 pr-3.5 py-2.5 text-[14px] font-normal leading-[1.5] text-[#171717] dark:text-white bg-white dark:bg-[#1E293B] border border-black/15 dark:border-white/20 rounded-xl outline-none focus:ring-2 focus:ring-[#FFE956]/60 focus:border-[#FFE956] transition-all shadow-2xs"
                       />
                     </div>
                   </div>
@@ -663,7 +637,6 @@ export const AuthView: React.FC = () => {
                       maxLength={6}
                       value={forgotOtp}
                       onChange={(e) => setForgotOtp(e.target.value)}
-                      placeholder="582910"
                       required
                       className="w-full px-3.5 py-2.5 text-center text-[16px] font-mono tracking-widest text-[#171717] dark:text-white bg-white dark:bg-[#1E293B] border border-black/15 dark:border-white/20 rounded-xl outline-none focus:ring-2 focus:ring-[#FFE956]/60 focus:border-[#FFE956] transition-all shadow-2xs"
                     />
@@ -693,8 +666,7 @@ export const AuthView: React.FC = () => {
                         value={forgotNewPassword}
                         onChange={(e) => setForgotNewPassword(e.target.value)}
                         required
-                        placeholder="••••••••••••"
-                        className="w-full pl-10 pr-3.5 py-2.5 text-[14px] font-normal leading-[1.5] text-[#171717] dark:text-white placeholder-[#8A8A8A] bg-white dark:bg-[#1E293B] border border-black/15 dark:border-white/20 rounded-xl outline-none focus:ring-2 focus:ring-[#FFE956]/60 focus:border-[#FFE956] transition-all shadow-2xs"
+                        className="w-full pl-10 pr-3.5 py-2.5 text-[14px] font-normal leading-[1.5] text-[#171717] dark:text-white bg-white dark:bg-[#1E293B] border border-black/15 dark:border-white/20 rounded-xl outline-none focus:ring-2 focus:ring-[#FFE956]/60 focus:border-[#FFE956] transition-all shadow-2xs"
                       />
                     </div>
                   </div>
@@ -710,8 +682,7 @@ export const AuthView: React.FC = () => {
                         value={forgotConfirmPassword}
                         onChange={(e) => setForgotConfirmPassword(e.target.value)}
                         required
-                        placeholder="••••••••••••"
-                        className="w-full pl-10 pr-3.5 py-2.5 text-[14px] font-normal leading-[1.5] text-[#171717] dark:text-white placeholder-[#8A8A8A] bg-white dark:bg-[#1E293B] border border-black/15 dark:border-white/20 rounded-xl outline-none focus:ring-2 focus:ring-[#FFE956]/60 focus:border-[#FFE956] transition-all shadow-2xs"
+                        className="w-full pl-10 pr-3.5 py-2.5 text-[14px] font-normal leading-[1.5] text-[#171717] dark:text-white bg-white dark:bg-[#1E293B] border border-black/15 dark:border-white/20 rounded-xl outline-none focus:ring-2 focus:ring-[#FFE956]/60 focus:border-[#FFE956] transition-all shadow-2xs"
                       />
                     </div>
                   </div>
@@ -755,30 +726,11 @@ export const AuthView: React.FC = () => {
             </div>
           )}
 
-          {/* Quick Demo Launchers */}
-          <div className="mt-6 pt-4 border-t border-black/5 dark:border-white/10 space-y-2">
-            <div className="text-[12px] font-medium text-[#737373] dark:text-[#A3A3A3] text-center">
-              Quick Demo Access
-            </div>
-            <div className="grid grid-cols-2 gap-2.5">
-              <button
-                type="button"
-                onClick={handleQuickEmployee}
-                className="p-2.5 rounded-xl border border-black/10 dark:border-white/15 bg-black/[0.02] dark:bg-white/[0.04] text-[#171717] dark:text-white text-[13px] font-semibold flex items-center justify-center gap-2 hover:bg-black/[0.05] dark:hover:bg-white/[0.08] transition-colors cursor-pointer"
-              >
-                <span className="w-2 h-2 rounded-full bg-[#288F3D]" />
-                <span>Employee</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={handleQuickAdmin}
-                className="p-2.5 rounded-xl border border-black/10 dark:border-white/15 bg-black/[0.02] dark:bg-white/[0.04] text-[#8B5CF6] dark:text-purple-300 text-[13px] font-semibold flex items-center justify-center gap-2 hover:bg-black/[0.05] dark:hover:bg-white/[0.08] transition-colors cursor-pointer"
-              >
-                <span className="w-2 h-2 rounded-full bg-[#8B5CF6]" />
-                <span>Admin</span>
-              </button>
-            </div>
+          {/* Demo Accounts Hint */}
+          <div className="mt-6 pt-4 border-t border-black/5 dark:border-white/10 text-center">
+            <p className="text-[12px] text-[#737373] dark:text-[#A3A3A3] leading-relaxed">
+              Demo employee: <strong className="text-[#171717] dark:text-white font-mono font-semibold">Emp001 / Pass@123</strong> · Demo admin: <strong className="text-[#171717] dark:text-white font-mono font-semibold">Admin01 / Admin@123</strong>
+            </p>
           </div>
         </div>
       </motion.div>
