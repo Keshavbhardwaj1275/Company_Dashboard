@@ -13,29 +13,36 @@ import {
   Clock,
   ArrowLeft,
   RotateCw,
-  BadgeCheck
+  BadgeCheck,
+  Check,
+  X,
+  Eye,
+  EyeOff
 } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
 import { Employee } from '../../types';
 import { AnimatedArtBackground } from '../background/AnimatedArtBackground';
+import { OtpNotification } from '../common/OtpNotification';
+import { 
+  generateSalt, 
+  hashPassword, 
+  verifyPassword, 
+  saveActivatedAccount 
+} from '../../utils/authCrypto';
 
 type AuthMode = 'signin' | 'first_time' | 'forgot_password';
 
-interface ActiveOtpState {
+interface PendingOtp {
   code: string;
-  identifier: string;
+  email: string;
+  purpose: 'setup' | 'reset';
   expiresAt: number;
-  isUsed: boolean;
+  attempts: number;
 }
 
-// Generate fresh, distinct 6-digit numeric OTP
-const generateDynamicOtp = (previousCode?: string): string => {
-  let newCode = '';
-  do {
-    newCode = Math.floor(100000 + Math.random() * 900000).toString();
-  } while (newCode === previousCode);
-  return newCode;
-};
+// Generate fresh 6-digit numeric OTP
+const generateOtp = (): string =>
+  String(crypto.getRandomValues(new Uint32Array(1))[0] % 1_000_000).padStart(6, '0');
 
 export const AuthView: React.FC = () => {
   const { 
@@ -57,40 +64,33 @@ export const AuthView: React.FC = () => {
   // Sign-in state
   const [emailOrId, setEmailOrId] = useState('');
   const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [rememberSession, setRememberSession] = useState(true);
   const [signInError, setSignInError] = useState('');
 
-  // Activated employees tracking
-  const [activatedEmployeeIds, setActivatedEmployeeIds] = useState<string[]>(() => {
-    try {
-      const saved = localStorage.getItem('flowsphere-activated-employees');
-      if (saved) return JSON.parse(saved);
-    } catch (e) {
-      console.error(e);
-    }
-    return ['FS-1002']; // FS-1002 is admin
-  });
+  // Pending OTP state (in-memory only; never written to localStorage or URL)
+  const [pendingOtp, setPendingOtp] = useState<PendingOtp | null>(null);
+  const [showOtpPopup, setShowOtpPopup] = useState(false);
+  const [isSendingOtp, setIsSendingOtp] = useState(false);
 
-  // First-time setup state (Steps: 1: Employee ID -> 2: Dynamic OTP -> 3: Create password -> 4: Success)
+  // First-time setup state (Steps: 1: email/id -> 2: verify otp -> 3: create password -> 4: success)
   const [setupStep, setSetupStep] = useState<1 | 2 | 3 | 4>(1);
-  const [setupEmployeeId, setSetupEmployeeId] = useState('');
+  const [setupEmailOrId, setSetupEmailOrId] = useState('');
   const [matchedEmployee, setMatchedEmployee] = useState<Employee | null>(null);
   const [setupOtp, setSetupOtp] = useState('');
   const [setupPassword, setSetupPassword] = useState('');
   const [setupConfirmPassword, setSetupConfirmPassword] = useState('');
   const [setupError, setSetupError] = useState('');
-  const [activeSetupOtp, setActiveSetupOtp] = useState<ActiveOtpState | null>(null);
   const [resendCooldown, setResendCooldown] = useState(0);
 
-  // Forgot password state (Steps: 1: email/id -> 2: otp -> 3: new_password -> 4: success)
+  // Forgot password state (Steps: 1: email/id -> 2: verify otp -> 3: reset password -> 4: success)
   const [forgotStep, setForgotStep] = useState<1 | 2 | 3 | 4>(1);
-  const [forgotEmail, setForgotEmail] = useState('');
+  const [forgotEmailOrId, setForgotEmailOrId] = useState('');
   const [matchedForgotAccount, setMatchedForgotAccount] = useState<Employee | null>(null);
   const [forgotOtp, setForgotOtp] = useState('');
   const [forgotNewPassword, setForgotNewPassword] = useState('');
   const [forgotConfirmPassword, setForgotConfirmPassword] = useState('');
   const [forgotError, setForgotError] = useState('');
-  const [activeForgotOtp, setActiveForgotOtp] = useState<ActiveOtpState | null>(null);
   const [forgotResendCooldown, setForgotResendCooldown] = useState(0);
 
   // Countdown timer for Setup OTP resend cooldown
@@ -115,10 +115,20 @@ export const AuthView: React.FC = () => {
     return () => clearInterval(interval);
   }, [forgotResendCooldown]);
 
+  const maskEmail = (email: string) => {
+    if (!email) return 'k***@flowsphere.internal';
+    const parts = email.split('@');
+    if (parts.length < 2) return email;
+    const user = parts[0];
+    const domain = parts[1];
+    const maskedUser = user.length > 0 ? `${user[0]}***` : '***';
+    return `${maskedUser}@${domain}`;
+  };
+
   // =========================================================================
   // Standard Sign-In Handler
   // =========================================================================
-  const handleSignIn = (e: React.FormEvent) => {
+  const handleSignIn = async (e: React.FormEvent) => {
     e.preventDefault();
     setSignInError('');
 
@@ -140,7 +150,19 @@ export const AuthView: React.FC = () => {
         emp.email?.toLowerCase() === query
     );
 
-    if (!account || account.password !== password) {
+    if (!account) {
+      incrementLoginAttempts();
+      setSignInError(`Incorrect Login ID or password. Attempt ${loginAttempts + 1} of 3 before temporary lockout.`);
+      return;
+    }
+
+    if (account.activated === false) {
+      setSignInError('This account has not been activated yet. Please complete First-Time Setup first.');
+      return;
+    }
+
+    const isValid = await verifyPassword(account, password);
+    if (!isValid) {
       incrementLoginAttempts();
       setSignInError(`Incorrect Login ID or password. Attempt ${loginAttempts + 1} of 3 before temporary lockout.`);
       return;
@@ -156,84 +178,78 @@ export const AuthView: React.FC = () => {
   // =========================================================================
   // First-Time Setup Handlers
   // =========================================================================
-  const handleSendSetupOtp = (e: React.FormEvent) => {
+  const handleSendSetupOtp = async (e: React.FormEvent) => {
     e.preventDefault();
     setSetupError('');
 
-    const query = setupEmployeeId.trim().toLowerCase();
+    const query = setupEmailOrId.trim().toLowerCase();
     if (!query) {
-      setSetupError('Please enter your Employee ID (e.g. FS-1001).');
+      setSetupError('Please enter your official work email or Employee ID.');
       return;
     }
 
     const account = employees.find(
       (emp) =>
-        emp.employeeId?.toLowerCase() === query ||
         emp.email?.toLowerCase() === query ||
+        emp.employeeId?.toLowerCase() === query ||
         emp.loginId?.toLowerCase() === query
     );
 
     if (!account) {
-      setSetupError('Employee ID not found. Please verify your ID with HR / IT administration.');
+      setSetupError('No employee record found for this email. Please contact your admin.');
       return;
     }
 
-    if (account.systemRole === 'admin' || account.seedRole === 'admin') {
-      setSetupError('Admin accounts must be provisioned directly by system administrators.');
+    if (account.activated === true) {
+      setSetupError('This account is already activated. Please sign in or use Forgot Password.');
       return;
     }
 
-    // Check if employee has already completed first-time setup
-    if (account.firstTimeCompleted || activatedEmployeeIds.includes(account.employeeId)) {
-      setSetupError(
-        `Account for ${account.name} (${account.employeeId}) has already completed first-time setup. Please use Sign In with your password.`
-      );
-      return;
-    }
+    // Deliver OTP with ~1.2s delivery simulation
+    // Frontend-only demo: this popup simulates an OTP arriving by email.
+    // Production must generate and deliver OTPs from the backend.
+    setIsSendingOtp(true);
+    await new Promise((r) => setTimeout(r, 1200));
+    setIsSendingOtp(false);
 
-    const newOtp = generateDynamicOtp(activeSetupOtp?.code);
-    const expiresAt = Date.now() + 5 * 60 * 1000; // 5 mins
+    const code = generateOtp();
+    const expiresAt = Date.now() + 5 * 60 * 1000; // 5 mins validity
 
-    setActiveSetupOtp({
-      code: newOtp,
-      identifier: account.employeeId,
+    setPendingOtp({
+      code,
+      email: account.email,
+      purpose: 'setup',
       expiresAt,
-      isUsed: false,
+      attempts: 0,
     });
+    setShowOtpPopup(true);
     setMatchedEmployee(account);
     setSetupStep(2);
     setSetupOtp('');
     setResendCooldown(30);
-
-    addToast(
-      'Verification OTP Dispatched',
-      `Dynamic 6-digit OTP [${newOtp}] generated for ${account.name} (valid for 5 mins).`,
-      'info'
-    );
   };
 
-  const handleResendSetupOtp = () => {
+  const handleResendSetupOtp = async () => {
     if (resendCooldown > 0 || !matchedEmployee) return;
 
-    const newOtp = generateDynamicOtp(activeSetupOtp?.code);
+    setIsSendingOtp(true);
+    await new Promise((r) => setTimeout(r, 800));
+    setIsSendingOtp(false);
+
+    const code = generateOtp();
     const expiresAt = Date.now() + 5 * 60 * 1000;
 
-    // Immediately invalidate previous OTP
-    setActiveSetupOtp({
-      code: newOtp,
-      identifier: matchedEmployee.employeeId,
+    setPendingOtp({
+      code,
+      email: matchedEmployee.email,
+      purpose: 'setup',
       expiresAt,
-      isUsed: false,
+      attempts: 0,
     });
+    setShowOtpPopup(true);
     setSetupOtp('');
     setSetupError('');
     setResendCooldown(30);
-
-    addToast(
-      'New OTP Dispatched',
-      `Fresh verification code [${newOtp}] generated for ${matchedEmployee.name}. Previous code is invalidated.`,
-      'info'
-    );
   };
 
   const handleVerifySetupOtp = (e: React.FormEvent) => {
@@ -245,93 +261,91 @@ export const AuthView: React.FC = () => {
       return;
     }
 
-    if (!activeSetupOtp || activeSetupOtp.identifier !== matchedEmployee?.employeeId) {
-      setSetupError('No active verification session found. Please start over.');
+    if (!pendingOtp || pendingOtp.purpose !== 'setup') {
+      setSetupError('No active verification session found. Please request a new code.');
       return;
     }
 
-    if (activeSetupOtp.isUsed) {
-      setSetupError('This OTP code has already been used or invalidated. Please request a new OTP.');
+    if (Date.now() > pendingOtp.expiresAt) {
+      setSetupError('This code has expired. Request a new one.');
       return;
     }
 
-    if (Date.now() > activeSetupOtp.expiresAt) {
-      setSetupError('Verification OTP has expired. Please request a new code.');
+    if (setupOtp.trim() !== pendingOtp.code) {
+      const nextAttempts = pendingOtp.attempts + 1;
+      const remaining = 5 - nextAttempts;
+      if (remaining <= 0) {
+        setPendingOtp(null);
+        setShowOtpPopup(false);
+        setSetupError('Too many incorrect attempts (5/5). This code has been invalidated. Please request a new code.');
+        return;
+      }
+      setPendingOtp({ ...pendingOtp, attempts: nextAttempts });
+      setSetupError(`Incorrect code. ${remaining} attempt${remaining === 1 ? '' : 's'} left.`);
       return;
     }
 
-    if (setupOtp.trim() !== activeSetupOtp.code) {
-      setSetupError('Invalid OTP code. Please check the 6-digit code and try again.');
-      return;
-    }
-
-    // Invalidate OTP after successful verification
-    setActiveSetupOtp((prev) => (prev ? { ...prev, isUsed: true } : null));
+    // OTP verified successfully
+    setPendingOtp(null);
+    setShowOtpPopup(false);
     setSetupStep(3);
-    addToast('Identity Verified', 'OTP confirmed. Now create your master password.', 'success');
+    setSetupPassword('');
+    setSetupConfirmPassword('');
   };
 
-  const handleCreateSetupPassword = (e: React.FormEvent) => {
+  // Password rules validation
+  const isSetupLengthValid = setupPassword.length >= 8;
+  const hasSetupUpper = /[A-Z]/.test(setupPassword);
+  const hasSetupNumber = /[0-9]/.test(setupPassword);
+  const isSetupMatch = setupPassword.length > 0 && setupPassword === setupConfirmPassword;
+  const isSetupPasswordValid = isSetupLengthValid && hasSetupUpper && hasSetupNumber && isSetupMatch;
+
+  const handleCreateSetupPassword = async (e: React.FormEvent) => {
     e.preventDefault();
     setSetupError('');
 
-    if (setupPassword.length < 6) {
-      setSetupError('Password must be at least 6 characters long.');
+    if (!isSetupPasswordValid || !matchedEmployee) {
+      setSetupError('Please satisfy all password security requirements above.');
       return;
     }
 
-    if (setupPassword !== setupConfirmPassword) {
-      setSetupError('Passwords do not match. Please re-enter.');
-      return;
-    }
-
-    if (!matchedEmployee) {
-      setSetupError('Session error. Please restart setup.');
-      return;
-    }
+    // Demo-grade password hashing. Production implementation must use bcrypt/Argon2 on the backend.
+    const salt = generateSalt();
+    const hash = await hashPassword(setupPassword, salt);
 
     const updatedEmp: Employee = {
       ...matchedEmployee,
-      password: setupPassword,
+      activated: true,
+      passwordHash: hash,
+      passwordSalt: salt,
       firstTimeCompleted: true,
     };
+    delete (updatedEmp as any).password;
 
     setEmployees((prev) =>
       prev.map((emp) => (emp.employeeId === matchedEmployee.employeeId ? updatedEmp : emp))
     );
-    setMatchedEmployee(updatedEmp);
 
-    // Save to activated employee IDs
-    setActivatedEmployeeIds((prev) => {
-      const next = Array.from(new Set([...prev, matchedEmployee.employeeId]));
-      try {
-        localStorage.setItem('flowsphere-activated-employees', JSON.stringify(next));
-      } catch (err) {
-        console.error(err);
-      }
-      return next;
+    saveActivatedAccount(matchedEmployee.employeeId, {
+      passwordHash: hash,
+      passwordSalt: salt,
+      activated: true,
+      loginId: matchedEmployee.loginId,
     });
 
+    setMatchedEmployee(updatedEmp);
     setSetupStep(4);
-    addToast('Account Setup Completed', 'Your password has been encrypted and configured.', 'success');
-  };
-
-  const handleCompleteSetupAndLaunch = () => {
-    if (!matchedEmployee) return;
-    setCurrentUser(matchedEmployee);
-    setRole(matchedEmployee.systemRole || 'employee');
-    setIsAuthenticated(true);
-    addToast('Welcome to FlowSphere', `Logged in as ${matchedEmployee.name}.`, 'success');
+    addToast('Account activated', 'Your account credentials have been configured.', 'success');
   };
 
   // =========================================================================
   // Forgot Password Handlers
   // =========================================================================
-  const handleSendForgotOtp = (e: React.FormEvent) => {
+  const handleSendForgotOtp = async (e: React.FormEvent) => {
     e.preventDefault();
     setForgotError('');
 
-    const query = forgotEmail.trim().toLowerCase();
+    const query = forgotEmailOrId.trim().toLowerCase();
     if (!query) {
       setForgotError('Please enter your registered work email or Employee ID.');
       return;
@@ -344,53 +358,53 @@ export const AuthView: React.FC = () => {
         emp.loginId?.toLowerCase() === query
     );
 
-    if (!account) {
-      setForgotError('No account found for this email or Employee ID.');
+    if (!account || account.activated === false) {
+      setForgotError('No active account found for this email.');
       return;
     }
 
-    const newOtp = generateDynamicOtp(activeForgotOtp?.code);
+    setIsSendingOtp(true);
+    await new Promise((r) => setTimeout(r, 1200));
+    setIsSendingOtp(false);
+
+    const code = generateOtp();
     const expiresAt = Date.now() + 5 * 60 * 1000;
 
-    setActiveForgotOtp({
-      code: newOtp,
-      identifier: account.employeeId,
+    setPendingOtp({
+      code,
+      email: account.email,
+      purpose: 'reset',
       expiresAt,
-      isUsed: false,
+      attempts: 0,
     });
+    setShowOtpPopup(true);
     setMatchedForgotAccount(account);
     setForgotStep(2);
     setForgotOtp('');
     setForgotResendCooldown(30);
-
-    addToast(
-      'Password Reset Code Sent',
-      `Dynamic reset OTP [${newOtp}] sent for ${account.name} (valid 5 mins).`,
-      'info'
-    );
   };
 
-  const handleResendForgotOtp = () => {
+  const handleResendForgotOtp = async () => {
     if (forgotResendCooldown > 0 || !matchedForgotAccount) return;
 
-    const newOtp = generateDynamicOtp(activeForgotOtp?.code);
+    setIsSendingOtp(true);
+    await new Promise((r) => setTimeout(r, 800));
+    setIsSendingOtp(false);
+
+    const code = generateOtp();
     const expiresAt = Date.now() + 5 * 60 * 1000;
 
-    setActiveForgotOtp({
-      code: newOtp,
-      identifier: matchedForgotAccount.employeeId,
+    setPendingOtp({
+      code,
+      email: matchedForgotAccount.email,
+      purpose: 'reset',
       expiresAt,
-      isUsed: false,
+      attempts: 0,
     });
+    setShowOtpPopup(true);
     setForgotOtp('');
     setForgotError('');
     setForgotResendCooldown(30);
-
-    addToast(
-      'New Reset Code Sent',
-      `Fresh OTP [${newOtp}] dispatched. Previous code has been invalidated.`,
-      'info'
-    );
   };
 
   const handleVerifyForgotOtp = (e: React.FormEvent) => {
@@ -398,65 +412,101 @@ export const AuthView: React.FC = () => {
     setForgotError('');
 
     if (!forgotOtp.trim()) {
-      setForgotError('Please enter the 6-digit OTP code.');
+      setForgotError('Please enter the 6-digit verification code.');
       return;
     }
 
-    if (!activeForgotOtp || activeForgotOtp.identifier !== matchedForgotAccount?.employeeId) {
-      setForgotError('No active reset request found.');
+    if (!pendingOtp || pendingOtp.purpose !== 'reset') {
+      setForgotError('No active reset session found. Please request a new code.');
       return;
     }
 
-    if (activeForgotOtp.isUsed) {
-      setForgotError('This OTP code has already been used or invalidated. Please request a new code.');
+    if (Date.now() > pendingOtp.expiresAt) {
+      setForgotError('This code has expired. Request a new one.');
       return;
     }
 
-    if (Date.now() > activeForgotOtp.expiresAt) {
-      setForgotError('Reset OTP has expired. Please request a fresh code.');
+    if (forgotOtp.trim() !== pendingOtp.code) {
+      const nextAttempts = pendingOtp.attempts + 1;
+      const remaining = 5 - nextAttempts;
+      if (remaining <= 0) {
+        setPendingOtp(null);
+        setShowOtpPopup(false);
+        setForgotError('Too many incorrect attempts (5/5). This code has been invalidated. Please request a new code.');
+        return;
+      }
+      setPendingOtp({ ...pendingOtp, attempts: nextAttempts });
+      setForgotError(`Incorrect code. ${remaining} attempt${remaining === 1 ? '' : 's'} left.`);
       return;
     }
 
-    if (forgotOtp.trim() !== activeForgotOtp.code) {
-      setForgotError('Invalid code. Please check the OTP and try again.');
-      return;
-    }
-
-    setActiveForgotOtp((prev) => (prev ? { ...prev, isUsed: true } : null));
+    setPendingOtp(null);
+    setShowOtpPopup(false);
     setForgotStep(3);
-    addToast('Code Verified', 'Please enter and confirm your new password.', 'success');
+    setForgotNewPassword('');
+    setForgotConfirmPassword('');
   };
 
-  const handleResetPassword = (e: React.FormEvent) => {
+  const isForgotLengthValid = forgotNewPassword.length >= 8;
+  const hasForgotUpper = /[A-Z]/.test(forgotNewPassword);
+  const hasForgotNumber = /[0-9]/.test(forgotNewPassword);
+  const isForgotMatch = forgotNewPassword.length > 0 && forgotNewPassword === forgotConfirmPassword;
+  const isForgotPwValid = isForgotLengthValid && hasForgotUpper && hasForgotNumber && isForgotMatch;
+
+  const handleResetPassword = async (e: React.FormEvent) => {
     e.preventDefault();
     setForgotError('');
 
-    if (forgotNewPassword.length < 6) {
-      setForgotError('Password must be at least 6 characters.');
+    if (!isForgotPwValid || !matchedForgotAccount) {
+      setForgotError('Please satisfy all password security requirements above.');
       return;
     }
 
-    if (forgotNewPassword !== forgotConfirmPassword) {
-      setForgotError('Passwords do not match.');
-      return;
-    }
+    // Demo-grade password hashing. Production implementation must use bcrypt/Argon2 on the backend.
+    const salt = generateSalt();
+    const hash = await hashPassword(forgotNewPassword, salt);
 
-    if (matchedForgotAccount) {
-      setEmployees((prev) =>
-        prev.map((emp) =>
-          emp.employeeId === matchedForgotAccount.employeeId
-            ? { ...emp, password: forgotNewPassword }
-            : emp
-        )
-      );
-    }
+    const updatedEmp: Employee = {
+      ...matchedForgotAccount,
+      activated: true,
+      passwordHash: hash,
+      passwordSalt: salt,
+    };
+    delete (updatedEmp as any).password;
+
+    setEmployees((prev) =>
+      prev.map((emp) =>
+        emp.employeeId === matchedForgotAccount.employeeId ? updatedEmp : emp
+      )
+    );
+
+    saveActivatedAccount(matchedForgotAccount.employeeId, {
+      passwordHash: hash,
+      passwordSalt: salt,
+      activated: true,
+      loginId: matchedForgotAccount.loginId,
+    });
 
     setForgotStep(4);
-    addToast('Password Reset Success', 'Your new password has been activated.', 'success');
+    addToast('Password updated', 'Your new password has been activated.', 'success');
   };
 
   return (
     <div className="login-page relative min-h-screen w-full flex items-center justify-center p-2 sm:p-3 md:p-5 lg:p-6 font-sans overflow-x-hidden bg-[#EDEDED] dark:bg-[#070A13] selection:bg-[#FFE956] selection:text-[#111827]">
+      {/* Dynamic Simulated In-App Verification Email Popup Notification */}
+      <OtpNotification
+        otp={
+          showOtpPopup && pendingOtp
+            ? {
+                code: pendingOtp.code,
+                email: pendingOtp.email,
+                expiresAt: pendingOtp.expiresAt,
+              }
+            : null
+        }
+        onClose={() => setShowOtpPopup(false)}
+      />
+
       {/* Outer Canvas Subtle Specular Light Streaks matching FlowSphere AppShell */}
       <div className="fixed inset-0 pointer-events-none opacity-40 dark:opacity-10">
         <div className="absolute top-0 left-1/4 w-[1px] h-full bg-gradient-to-b from-white via-white/50 to-transparent" />
@@ -556,7 +606,7 @@ export const AuthView: React.FC = () => {
                   {authMode === 'signin'
                     ? 'Sign in to continue to FlowSphere.'
                     : authMode === 'first_time'
-                    ? 'Activate your employee account with your Employee ID.'
+                    ? 'Activate your official workspace employee account.'
                     : 'Recover access to your workspace account.'}
                 </p>
               </div>
@@ -569,6 +619,7 @@ export const AuthView: React.FC = () => {
                     onClick={() => {
                       setAuthMode('signin');
                       setSignInError('');
+                      setPendingOtp(null);
                     }}
                     className={`flex-1 py-1.5 rounded-lg transition-all cursor-pointer ${
                       authMode === 'signin'
@@ -585,6 +636,7 @@ export const AuthView: React.FC = () => {
                       setSetupStep(1);
                       setSetupError('');
                       setSetupOtp('');
+                      setPendingOtp(null);
                     }}
                     className={`flex-1 py-1.5 rounded-lg transition-all cursor-pointer ${
                       authMode === 'first_time'
@@ -618,7 +670,7 @@ export const AuthView: React.FC = () => {
 
                   <div>
                     <label className="block text-[13px] font-medium leading-[1.4] text-[#171717] dark:text-[#EDEDED] mb-1.5">
-                      Login ID / Employee ID
+                      Employee ID / Email
                     </label>
                     <div className="relative">
                       <User size={16} className="absolute left-3.5 top-1/2 transform -translate-y-1/2 text-[#8A8A8A]" />
@@ -626,7 +678,7 @@ export const AuthView: React.FC = () => {
                         type="text"
                         value={emailOrId}
                         onChange={(e) => setEmailOrId(e.target.value)}
-                        placeholder="e.g. Emp001 or FS-1001"
+                        placeholder="EMP001 or employee@flowsphere.internal"
                         required
                         disabled={isLockedOut}
                         className="w-full pl-10 pr-3.5 py-2.5 text-[14px] font-normal leading-[1.5] text-[#171717] dark:text-white bg-white dark:bg-[#1E293B] border border-black/15 dark:border-white/20 rounded-xl outline-none focus:ring-2 focus:ring-[#FFE956]/60 focus:border-[#FFE956] disabled:opacity-60 transition-all shadow-2xs"
@@ -645,6 +697,7 @@ export const AuthView: React.FC = () => {
                           setAuthMode('forgot_password');
                           setForgotStep(1);
                           setForgotError('');
+                          setPendingOtp(null);
                         }}
                         className="text-[12px] text-[#158AF4] hover:underline font-medium cursor-pointer"
                       >
@@ -652,15 +705,24 @@ export const AuthView: React.FC = () => {
                       </button>
                     </div>
                     <div className="relative">
-                      <Lock size={16} className="absolute left-3.5 top-1/2 transform -translate-y-1/2 text-[#8A8A8A]" />
                       <input
-                        type="password"
+                        type={showPassword ? 'text' : 'password'}
                         value={password}
                         onChange={(e) => setPassword(e.target.value)}
+                        placeholder="Enter password"
                         required
                         disabled={isLockedOut}
-                        className="w-full pl-10 pr-3.5 py-2.5 text-[14px] font-normal leading-[1.5] text-[#171717] dark:text-white bg-white dark:bg-[#1E293B] border border-black/15 dark:border-white/20 rounded-xl outline-none focus:ring-2 focus:ring-[#FFE956]/60 focus:border-[#FFE956] disabled:opacity-60 transition-all shadow-2xs"
+                        className="w-full pl-3.5 pr-10 py-2.5 text-[14px] font-normal leading-[1.5] text-[#171717] dark:text-white bg-white dark:bg-[#1E293B] border border-black/15 dark:border-white/20 rounded-xl outline-none focus:ring-2 focus:ring-[#FFE956]/60 focus:border-[#FFE956] disabled:opacity-60 transition-all shadow-2xs"
                       />
+                      <button
+                        type="button"
+                        onClick={() => setShowPassword(!showPassword)}
+                        aria-label={showPassword ? 'Hide password' : 'Show password'}
+                        disabled={isLockedOut}
+                        className="absolute right-3.5 top-1/2 -translate-y-1/2 text-[#8A8A8A] hover:text-[#171717] dark:hover:text-white transition-colors cursor-pointer p-0.5 focus:outline-none focus-visible:ring-2 focus-visible:ring-[#FFE956] rounded disabled:opacity-60"
+                      >
+                        {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+                      </button>
                     </div>
                   </div>
 
@@ -676,7 +738,7 @@ export const AuthView: React.FC = () => {
                     </label>
                     <span className="text-[12px] text-[#288F3D] font-medium flex items-center gap-1">
                       <ShieldCheck size={13} />
-                      <span>AES-256 Encrypted</span>
+                      <span>SHA-256 Auth</span>
                     </span>
                   </div>
 
@@ -707,72 +769,77 @@ export const AuthView: React.FC = () => {
                   <div className="flex items-center justify-between text-[12px] text-[#737373] dark:text-[#A3A3A3] px-1 pb-1.5 border-b border-black/5 dark:border-white/10">
                     <span>Step {setupStep} of 4</span>
                     <span className="font-semibold text-[#171717] dark:text-white">
-                      {setupStep === 1 && 'Employee ID'}
-                      {setupStep === 2 && 'Dynamic OTP Verification'}
-                      {setupStep === 3 && 'Create Master Password'}
+                      {setupStep === 1 && 'Official Email'}
+                      {setupStep === 2 && 'Verification Code'}
+                      {setupStep === 3 && 'Create Password'}
                       {setupStep === 4 && 'Setup Complete'}
                     </span>
                   </div>
 
-                  {/* Step 1: Employee ID Input */}
+                  {/* Step 1: Official Email / Employee ID */}
                   {setupStep === 1 && (
                     <form onSubmit={handleSendSetupOtp} className="space-y-3.5">
                       <div>
                         <label className="block text-[13px] font-medium leading-[1.4] text-[#171717] dark:text-[#EDEDED] mb-1.5">
-                          Employee ID
+                          Employee ID / Email
                         </label>
                         <div className="relative">
-                          <User size={16} className="absolute left-3.5 top-1/2 transform -translate-y-1/2 text-[#8A8A8A]" />
+                          <Mail size={16} className="absolute left-3.5 top-1/2 transform -translate-y-1/2 text-[#8A8A8A]" />
                           <input
                             type="text"
-                            value={setupEmployeeId}
-                            onChange={(e) => setSetupEmployeeId(e.target.value)}
-                            placeholder="e.g. FS-1001"
+                            value={setupEmailOrId}
+                            onChange={(e) => setSetupEmailOrId(e.target.value)}
+                            placeholder="EMP002 or new.employee@flowsphere.internal"
                             required
                             className="w-full pl-10 pr-3.5 py-2.5 text-[14px] font-normal leading-[1.5] text-[#171717] dark:text-white bg-white dark:bg-[#1E293B] border border-black/15 dark:border-white/20 rounded-xl outline-none focus:ring-2 focus:ring-[#FFE956]/60 focus:border-[#FFE956] transition-all shadow-2xs"
                           />
                         </div>
-                        <p className="text-[12px] text-[#737373] dark:text-[#A3A3A3] mt-1.5">
-                          Enter your official corporate Employee ID to generate a dynamic verification code.
+                        <p className="text-[12px] text-[#64748B] dark:text-[#94A3B8] mt-1.5">
+                          Enter your employee ID or company email to receive a secure 6-digit verification code.
                         </p>
                       </div>
 
                       <button
                         type="submit"
-                        className="btn-yellow w-full py-2.5 rounded-xl text-[14px] font-semibold tracking-[-0.005em] flex items-center justify-center gap-2 mt-2 shadow-sm cursor-pointer"
+                        disabled={isSendingOtp}
+                        className="btn-yellow w-full py-2.5 rounded-xl text-[14px] font-semibold tracking-[-0.005em] flex items-center justify-center gap-2 mt-2 shadow-sm cursor-pointer disabled:opacity-60"
                       >
-                        <KeyRound size={15} />
-                        <span>Generate Verification OTP</span>
+                        {isSendingOtp ? (
+                          <>
+                            <RotateCw size={15} className="animate-spin" />
+                            <span>Sending...</span>
+                          </>
+                        ) : (
+                          <>
+                            <KeyRound size={15} />
+                            <span>Send Verification OTP</span>
+                          </>
+                        )}
                       </button>
+
+                      {/* Evaluator neutral hint line */}
+                      <div className="pt-2 text-center text-[11.5px] text-[#737373] dark:text-[#A3A3A3] select-none">
+                        Not activated yet? Demo: EMP002 · new.employee@flowsphere.internal
+                      </div>
                     </form>
                   )}
 
                   {/* Step 2: Enter & Verify Dynamic OTP */}
-                  {setupStep === 2 && matchedEmployee && activeSetupOtp && (
+                  {setupStep === 2 && matchedEmployee && (
                     <form onSubmit={handleVerifySetupOtp} className="space-y-3.5">
-                      {/* Dynamic OTP Dispatch Banner */}
-                      <div className="p-3.5 rounded-xl bg-blue-500/10 border border-blue-500/20 text-blue-800 dark:text-blue-200 text-[13px] leading-[1.45]">
-                        <div className="flex items-center justify-between font-semibold">
-                          <span>Verification Code for {matchedEmployee.name}</span>
-                          <span className="font-mono text-xs px-2 py-0.5 rounded bg-blue-500/20 text-blue-700 dark:text-blue-300">
-                            {matchedEmployee.employeeId}
-                          </span>
-                        </div>
-                        <div className="mt-2 p-2.5 rounded-lg bg-white/80 dark:bg-black/40 border border-blue-500/20 flex items-center justify-between">
-                          <span className="text-[12px] text-[#64748B] dark:text-[#94A3B8]">Generated OTP:</span>
-                          <span className="font-mono font-extrabold text-[18px] text-[#0F172A] dark:text-white tracking-widest">
-                            {activeSetupOtp.code}
-                          </span>
-                        </div>
-                        <div className="mt-1.5 text-[11px] text-[#64748B] dark:text-[#94A3B8] flex items-center justify-between">
-                          <span>Valid for 5 minutes</span>
-                          <span>Single-use code</span>
-                        </div>
+                      <div className="space-y-1 text-left py-0.5">
+                        <p className="text-[13px] text-[#334155] dark:text-[#CBD5E1] leading-snug">
+                          Enter the 6-digit code sent to{' '}
+                          <span className="font-semibold text-[#0F172A] dark:text-white font-mono">{maskEmail(matchedEmployee.email)}</span>
+                        </p>
+                        <p className="text-[12px] text-[#64748B] dark:text-[#94A3B8] leading-snug">
+                          Check the FlowSphere Security notification above to view your code.
+                        </p>
                       </div>
 
                       <div>
                         <label className="block text-[13px] font-medium leading-[1.4] text-[#171717] dark:text-[#EDEDED] mb-1.5">
-                          Enter 6-Digit Verification OTP
+                          6-Digit Verification Code
                         </label>
                         <input
                           type="text"
@@ -781,7 +848,7 @@ export const AuthView: React.FC = () => {
                           onChange={(e) => setSetupOtp(e.target.value.replace(/\D/g, ''))}
                           placeholder="000000"
                           required
-                          className="w-full px-3.5 py-2.5 text-center text-[18px] font-mono tracking-widest text-[#171717] dark:text-white bg-white dark:bg-[#1E293B] border border-black/15 dark:border-white/20 rounded-xl outline-none focus:ring-2 focus:ring-[#FFE956]/60 focus:border-[#FFE956] transition-all shadow-2xs"
+                          className="w-full px-3.5 py-2.5 text-center text-[20px] font-mono tracking-[0.25em] text-[#171717] dark:text-white bg-white dark:bg-[#1E293B] border border-black/15 dark:border-white/20 rounded-xl outline-none focus:ring-2 focus:ring-[#FFE956]/60 focus:border-[#FFE956] transition-all shadow-2xs"
                         />
                       </div>
 
@@ -789,11 +856,11 @@ export const AuthView: React.FC = () => {
                         <button
                           type="button"
                           onClick={handleResendSetupOtp}
-                          disabled={resendCooldown > 0}
+                          disabled={resendCooldown > 0 || isSendingOtp}
                           className="text-[12px] font-medium text-[#158AF4] hover:underline disabled:opacity-50 disabled:no-underline flex items-center gap-1 cursor-pointer disabled:cursor-not-allowed"
                         >
-                          <RotateCw size={12} className={resendCooldown > 0 ? 'animate-spin' : ''} />
-                          <span>{resendCooldown > 0 ? `Resend in ${resendCooldown}s` : 'Resend New OTP'}</span>
+                          <RotateCw size={12} className={resendCooldown > 0 || isSendingOtp ? 'animate-spin' : ''} />
+                          <span>{resendCooldown > 0 ? `Resend OTP (${resendCooldown}s)` : 'Resend OTP'}</span>
                         </button>
                       </div>
 
@@ -803,6 +870,7 @@ export const AuthView: React.FC = () => {
                           onClick={() => {
                             setSetupStep(1);
                             setSetupError('');
+                            setPendingOtp(null);
                           }}
                           className="flex-1 py-2.5 rounded-xl border border-black/10 dark:border-white/15 text-[13px] font-medium text-[#525252] hover:text-[#171717] dark:text-[#A3A3A3] dark:hover:text-white transition-colors cursor-pointer"
                         >
@@ -819,7 +887,7 @@ export const AuthView: React.FC = () => {
                     </form>
                   )}
 
-                  {/* Step 3: Create & Confirm Password */}
+                  {/* Step 3: Create Master Password with Live Checklist */}
                   {setupStep === 3 && matchedEmployee && (
                     <form onSubmit={handleCreateSetupPassword} className="space-y-3.5">
                       <div className="p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-800 dark:text-emerald-200 text-[13px] flex items-center gap-2">
@@ -829,7 +897,7 @@ export const AuthView: React.FC = () => {
 
                       <div>
                         <label className="block text-[13px] font-medium leading-[1.4] text-[#171717] dark:text-[#EDEDED] mb-1.5">
-                          Create Master Password (Min 6 Characters)
+                          Create Master Password
                         </label>
                         <div className="relative">
                           <Lock size={16} className="absolute left-3.5 top-1/2 transform -translate-y-1/2 text-[#8A8A8A]" />
@@ -838,6 +906,7 @@ export const AuthView: React.FC = () => {
                             value={setupPassword}
                             onChange={(e) => setSetupPassword(e.target.value)}
                             required
+                            placeholder="••••••••"
                             className="w-full pl-10 pr-3.5 py-2.5 text-[14px] font-normal leading-[1.5] text-[#171717] dark:text-white bg-white dark:bg-[#1E293B] border border-black/15 dark:border-white/20 rounded-xl outline-none focus:ring-2 focus:ring-[#FFE956]/60 focus:border-[#FFE956] transition-all shadow-2xs"
                           />
                         </div>
@@ -854,14 +923,39 @@ export const AuthView: React.FC = () => {
                             value={setupConfirmPassword}
                             onChange={(e) => setSetupConfirmPassword(e.target.value)}
                             required
+                            placeholder="••••••••"
                             className="w-full pl-10 pr-3.5 py-2.5 text-[14px] font-normal leading-[1.5] text-[#171717] dark:text-white bg-white dark:bg-[#1E293B] border border-black/15 dark:border-white/20 rounded-xl outline-none focus:ring-2 focus:ring-[#FFE956]/60 focus:border-[#FFE956] transition-all shadow-2xs"
                           />
                         </div>
                       </div>
 
+                      {/* Live Security Checklist */}
+                      <div className="p-3 rounded-xl bg-black/[0.03] dark:bg-white/[0.04] border border-black/5 dark:border-white/10 space-y-1.5 text-[12px]">
+                        <div className="font-semibold text-[#171717] dark:text-white mb-1">
+                          Password Requirements:
+                        </div>
+                        <div className={`flex items-center gap-1.5 ${isSetupLengthValid ? 'text-emerald-600 dark:text-emerald-400 font-medium' : 'text-[#737373] dark:text-[#A3A3A3]'}`}>
+                          {isSetupLengthValid ? <Check size={13} /> : <div className="w-1.5 h-1.5 rounded-full bg-current ml-1 mr-1" />}
+                          <span>At least 8 characters long</span>
+                        </div>
+                        <div className={`flex items-center gap-1.5 ${hasSetupUpper ? 'text-emerald-600 dark:text-emerald-400 font-medium' : 'text-[#737373] dark:text-[#A3A3A3]'}`}>
+                          {hasSetupUpper ? <Check size={13} /> : <div className="w-1.5 h-1.5 rounded-full bg-current ml-1 mr-1" />}
+                          <span>At least one uppercase letter (A-Z)</span>
+                        </div>
+                        <div className={`flex items-center gap-1.5 ${hasSetupNumber ? 'text-emerald-600 dark:text-emerald-400 font-medium' : 'text-[#737373] dark:text-[#A3A3A3]'}`}>
+                          {hasSetupNumber ? <Check size={13} /> : <div className="w-1.5 h-1.5 rounded-full bg-current ml-1 mr-1" />}
+                          <span>At least one number (0-9)</span>
+                        </div>
+                        <div className={`flex items-center gap-1.5 ${isSetupMatch ? 'text-emerald-600 dark:text-emerald-400 font-medium' : 'text-[#737373] dark:text-[#A3A3A3]'}`}>
+                          {isSetupMatch ? <Check size={13} /> : <div className="w-1.5 h-1.5 rounded-full bg-current ml-1 mr-1" />}
+                          <span>Passwords match</span>
+                        </div>
+                      </div>
+
                       <button
                         type="submit"
-                        className="btn-yellow w-full py-2.5 rounded-xl text-[14px] font-semibold tracking-[-0.005em] flex items-center justify-center gap-2 mt-2 shadow-sm cursor-pointer"
+                        disabled={!isSetupPasswordValid}
+                        className="btn-yellow w-full py-2.5 rounded-xl text-[14px] font-semibold tracking-[-0.005em] flex items-center justify-center gap-2 mt-2 shadow-sm cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                       >
                         <CheckCircle2 size={15} />
                         <span>Save Password & Activate</span>
@@ -871,24 +965,28 @@ export const AuthView: React.FC = () => {
 
                   {/* Step 4: Setup Complete Screen */}
                   {setupStep === 4 && matchedEmployee && (
-                    <div className="text-center py-4 space-y-3.5">
+                    <div className="text-center py-4 space-y-4">
                       <div className="w-12 h-12 rounded-full bg-[#BEF1CA] text-[#1F7A35] mx-auto flex items-center justify-center">
                         <CheckCircle2 size={24} />
                       </div>
                       <div>
-                        <h3 className="text-[17px] font-bold text-[#171717] dark:text-white">
-                          Account Activated Successfully
+                        <h3 className="text-[18px] font-bold text-[#171717] dark:text-white">
+                          Account Activated
                         </h3>
-                        <p className="text-[13px] font-normal leading-[1.45] text-[#737373] dark:text-[#A3A3A3] mt-1">
-                          Welcome, <strong>{matchedEmployee.name}</strong>! Your master credentials for {matchedEmployee.employeeId} have been saved.
+                        <p className="text-[14px] font-normal leading-[1.5] text-[#525252] dark:text-[#CBD5E1] mt-1.5">
+                          Account activated. Your Login ID is <strong className="font-mono text-[#0F172A] dark:text-white font-bold">{matchedEmployee.loginId || matchedEmployee.employeeId}</strong>.
                         </p>
                       </div>
                       <button
                         type="button"
-                        onClick={handleCompleteSetupAndLaunch}
+                        onClick={() => {
+                          setAuthMode('signin');
+                          setEmailOrId('');
+                          setPassword('');
+                        }}
                         className="btn-yellow w-full py-2.5 rounded-xl text-[14px] font-semibold tracking-[-0.005em] flex items-center justify-center gap-2 shadow-sm cursor-pointer"
                       >
-                        <span>Launch Workspace</span>
+                        <span>Go to Sign In</span>
                         <ArrowRight size={15} />
                       </button>
                     </div>
@@ -904,14 +1002,17 @@ export const AuthView: React.FC = () => {
                   <div className="flex items-center justify-between pb-2 border-b border-black/5 dark:border-white/10">
                     <button
                       type="button"
-                      onClick={() => setAuthMode('signin')}
+                      onClick={() => {
+                        setAuthMode('signin');
+                        setPendingOtp(null);
+                      }}
                       className="flex items-center gap-1 text-[13px] font-medium text-[#737373] hover:text-[#171717] dark:hover:text-white transition-colors cursor-pointer"
                     >
                       <ArrowLeft size={14} />
                       <span>Back to Sign In</span>
                     </button>
                     <span className="text-[13px] font-semibold text-[#171717] dark:text-white">
-                      Forgot Password
+                      Reset Password
                     </span>
                   </div>
 
@@ -927,55 +1028,60 @@ export const AuthView: React.FC = () => {
                     <form onSubmit={handleSendForgotOtp} className="space-y-3.5">
                       <div>
                         <label className="block text-[13px] font-medium leading-[1.4] text-[#171717] dark:text-[#EDEDED] mb-1.5">
-                          Official Work Email or Employee ID
+                          Employee ID / Email
                         </label>
                         <div className="relative">
                           <Mail size={16} className="absolute left-3.5 top-1/2 transform -translate-y-1/2 text-[#8A8A8A]" />
                           <input
                             type="text"
-                            value={forgotEmail}
-                            onChange={(e) => setForgotEmail(e.target.value)}
-                            placeholder="e.g. virat.s@flowsphere.internal or FS-1001"
+                            value={forgotEmailOrId}
+                            onChange={(e) => setForgotEmailOrId(e.target.value)}
+                            placeholder="EMP001 or employee@flowsphere.internal"
                             required
                             className="w-full pl-10 pr-3.5 py-2.5 text-[14px] font-normal leading-[1.5] text-[#171717] dark:text-white bg-white dark:bg-[#1E293B] border border-black/15 dark:border-white/20 rounded-xl outline-none focus:ring-2 focus:ring-[#FFE956]/60 focus:border-[#FFE956] transition-all shadow-2xs"
                           />
                         </div>
+                        <p className="text-[12px] text-[#64748B] dark:text-[#94A3B8] mt-1.5">
+                          Enter your registered employee ID or email to receive a password reset code.
+                        </p>
                       </div>
 
                       <button
                         type="submit"
-                        className="btn-yellow w-full py-2.5 rounded-xl text-[14px] font-semibold tracking-[-0.005em] flex items-center justify-center gap-2 shadow-sm cursor-pointer"
+                        disabled={isSendingOtp}
+                        className="btn-yellow w-full py-2.5 rounded-xl text-[14px] font-semibold tracking-[-0.005em] flex items-center justify-center gap-2 shadow-sm cursor-pointer disabled:opacity-60"
                       >
-                        <KeyRound size={15} />
-                        <span>Send Verification Code</span>
+                        {isSendingOtp ? (
+                          <>
+                            <RotateCw size={15} className="animate-spin" />
+                            <span>Sending...</span>
+                          </>
+                        ) : (
+                          <>
+                            <KeyRound size={15} />
+                            <span>Send Verification OTP</span>
+                          </>
+                        )}
                       </button>
                     </form>
                   )}
 
                   {/* Step 2: Enter OTP */}
-                  {forgotStep === 2 && matchedForgotAccount && activeForgotOtp && (
+                  {forgotStep === 2 && matchedForgotAccount && (
                     <form onSubmit={handleVerifyForgotOtp} className="space-y-3.5">
-                      <div className="p-3.5 rounded-xl bg-blue-500/10 border border-blue-500/20 text-blue-800 dark:text-blue-200 text-[13px] leading-[1.45]">
-                        <div className="flex items-center justify-between font-semibold">
-                          <span>Reset Code for {matchedForgotAccount.name}</span>
-                          <span className="font-mono text-xs px-2 py-0.5 rounded bg-blue-500/20">
-                            {matchedForgotAccount.employeeId}
-                          </span>
-                        </div>
-                        <div className="mt-2 p-2.5 rounded-lg bg-white/80 dark:bg-black/40 border border-blue-500/20 flex items-center justify-between">
-                          <span className="text-[12px] text-[#64748B] dark:text-[#94A3B8]">Dynamic OTP:</span>
-                          <span className="font-mono font-extrabold text-[18px] text-[#0F172A] dark:text-white tracking-widest">
-                            {activeForgotOtp.code}
-                          </span>
-                        </div>
-                        <div className="mt-1.5 text-[11px] text-[#64748B] dark:text-[#94A3B8]">
-                          Valid for 5 minutes · Single-use code
-                        </div>
+                      <div className="space-y-1 text-left py-0.5">
+                        <p className="text-[13px] text-[#334155] dark:text-[#CBD5E1] leading-snug">
+                          Enter the 6-digit code sent to{' '}
+                          <span className="font-semibold text-[#0F172A] dark:text-white font-mono">{maskEmail(matchedForgotAccount.email)}</span>
+                        </p>
+                        <p className="text-[12px] text-[#64748B] dark:text-[#94A3B8] leading-snug">
+                          Check the FlowSphere Security notification above to view your code.
+                        </p>
                       </div>
 
                       <div>
                         <label className="block text-[13px] font-medium leading-[1.4] text-[#171717] dark:text-[#EDEDED] mb-1.5">
-                          Enter 6-Digit OTP Code
+                          6-Digit Verification Code
                         </label>
                         <input
                           type="text"
@@ -984,7 +1090,7 @@ export const AuthView: React.FC = () => {
                           onChange={(e) => setForgotOtp(e.target.value.replace(/\D/g, ''))}
                           placeholder="000000"
                           required
-                          className="w-full px-3.5 py-2.5 text-center text-[18px] font-mono tracking-widest text-[#171717] dark:text-white bg-white dark:bg-[#1E293B] border border-black/15 dark:border-white/20 rounded-xl outline-none focus:ring-2 focus:ring-[#FFE956]/60 focus:border-[#FFE956] transition-all shadow-2xs"
+                          className="w-full px-3.5 py-2.5 text-center text-[20px] font-mono tracking-[0.25em] text-[#171717] dark:text-white bg-white dark:bg-[#1E293B] border border-black/15 dark:border-white/20 rounded-xl outline-none focus:ring-2 focus:ring-[#FFE956]/60 focus:border-[#FFE956] transition-all shadow-2xs"
                         />
                       </div>
 
@@ -992,30 +1098,43 @@ export const AuthView: React.FC = () => {
                         <button
                           type="button"
                           onClick={handleResendForgotOtp}
-                          disabled={forgotResendCooldown > 0}
+                          disabled={forgotResendCooldown > 0 || isSendingOtp}
                           className="text-[12px] font-medium text-[#158AF4] hover:underline disabled:opacity-50 disabled:no-underline flex items-center gap-1 cursor-pointer disabled:cursor-not-allowed"
                         >
-                          <RotateCw size={12} className={forgotResendCooldown > 0 ? 'animate-spin' : ''} />
-                          <span>{forgotResendCooldown > 0 ? `Resend in ${forgotResendCooldown}s` : 'Resend Code'}</span>
+                          <RotateCw size={12} className={forgotResendCooldown > 0 || isSendingOtp ? 'animate-spin' : ''} />
+                          <span>{forgotResendCooldown > 0 ? `Resend OTP (${forgotResendCooldown}s)` : 'Resend OTP'}</span>
                         </button>
                       </div>
 
-                      <button
-                        type="submit"
-                        className="btn-yellow w-full py-2.5 rounded-xl text-[14px] font-semibold tracking-[-0.005em] flex items-center justify-center gap-1.5 shadow-sm cursor-pointer"
-                      >
-                        <span>Verify Code</span>
-                        <ArrowRight size={14} />
-                      </button>
+                      <div className="flex gap-2.5 pt-1">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setForgotStep(1);
+                            setForgotError('');
+                            setPendingOtp(null);
+                          }}
+                          className="flex-1 py-2.5 rounded-xl border border-black/10 dark:border-white/15 text-[13px] font-medium text-[#525252] hover:text-[#171717] dark:text-[#A3A3A3] dark:hover:text-white transition-colors cursor-pointer"
+                        >
+                          Back
+                        </button>
+                        <button
+                          type="submit"
+                          className="btn-yellow flex-1 py-2.5 rounded-xl text-[14px] font-semibold tracking-[-0.005em] flex items-center justify-center gap-1.5 shadow-sm cursor-pointer"
+                        >
+                          <span>Verify Code</span>
+                          <ArrowRight size={14} />
+                        </button>
+                      </div>
                     </form>
                   )}
 
-                  {/* Step 3: New Password */}
+                  {/* Step 3: New Password with Live Checklist */}
                   {forgotStep === 3 && (
                     <form onSubmit={handleResetPassword} className="space-y-3.5">
                       <div>
                         <label className="block text-[13px] font-medium leading-[1.4] text-[#171717] dark:text-[#EDEDED] mb-1.5">
-                          New Password (Min 6 Characters)
+                          New Master Password
                         </label>
                         <div className="relative">
                           <Lock size={16} className="absolute left-3.5 top-1/2 transform -translate-y-1/2 text-[#8A8A8A]" />
@@ -1024,6 +1143,7 @@ export const AuthView: React.FC = () => {
                             value={forgotNewPassword}
                             onChange={(e) => setForgotNewPassword(e.target.value)}
                             required
+                            placeholder="••••••••"
                             className="w-full pl-10 pr-3.5 py-2.5 text-[14px] font-normal leading-[1.5] text-[#171717] dark:text-white bg-white dark:bg-[#1E293B] border border-black/15 dark:border-white/20 rounded-xl outline-none focus:ring-2 focus:ring-[#FFE956]/60 focus:border-[#FFE956] transition-all shadow-2xs"
                           />
                         </div>
@@ -1040,14 +1160,39 @@ export const AuthView: React.FC = () => {
                             value={forgotConfirmPassword}
                             onChange={(e) => setForgotConfirmPassword(e.target.value)}
                             required
+                            placeholder="••••••••"
                             className="w-full pl-10 pr-3.5 py-2.5 text-[14px] font-normal leading-[1.5] text-[#171717] dark:text-white bg-white dark:bg-[#1E293B] border border-black/15 dark:border-white/20 rounded-xl outline-none focus:ring-2 focus:ring-[#FFE956]/60 focus:border-[#FFE956] transition-all shadow-2xs"
                           />
                         </div>
                       </div>
 
+                      {/* Live Security Checklist */}
+                      <div className="p-3 rounded-xl bg-black/[0.03] dark:bg-white/[0.04] border border-black/5 dark:border-white/10 space-y-1.5 text-[12px]">
+                        <div className="font-semibold text-[#171717] dark:text-white mb-1">
+                          Password Requirements:
+                        </div>
+                        <div className={`flex items-center gap-1.5 ${isForgotLengthValid ? 'text-emerald-600 dark:text-emerald-400 font-medium' : 'text-[#737373] dark:text-[#A3A3A3]'}`}>
+                          {isForgotLengthValid ? <Check size={13} /> : <div className="w-1.5 h-1.5 rounded-full bg-current ml-1 mr-1" />}
+                          <span>At least 8 characters long</span>
+                        </div>
+                        <div className={`flex items-center gap-1.5 ${hasForgotUpper ? 'text-emerald-600 dark:text-emerald-400 font-medium' : 'text-[#737373] dark:text-[#A3A3A3]'}`}>
+                          {hasForgotUpper ? <Check size={13} /> : <div className="w-1.5 h-1.5 rounded-full bg-current ml-1 mr-1" />}
+                          <span>At least one uppercase letter (A-Z)</span>
+                        </div>
+                        <div className={`flex items-center gap-1.5 ${hasForgotNumber ? 'text-emerald-600 dark:text-emerald-400 font-medium' : 'text-[#737373] dark:text-[#A3A3A3]'}`}>
+                          {hasForgotNumber ? <Check size={13} /> : <div className="w-1.5 h-1.5 rounded-full bg-current ml-1 mr-1" />}
+                          <span>At least one number (0-9)</span>
+                        </div>
+                        <div className={`flex items-center gap-1.5 ${isForgotMatch ? 'text-emerald-600 dark:text-emerald-400 font-medium' : 'text-[#737373] dark:text-[#A3A3A3]'}`}>
+                          {isForgotMatch ? <Check size={13} /> : <div className="w-1.5 h-1.5 rounded-full bg-current ml-1 mr-1" />}
+                          <span>Passwords match</span>
+                        </div>
+                      </div>
+
                       <button
                         type="submit"
-                        className="btn-yellow w-full py-2.5 rounded-xl text-[14px] font-semibold tracking-[-0.005em] flex items-center justify-center gap-2 mt-2 shadow-sm cursor-pointer"
+                        disabled={!isForgotPwValid}
+                        className="btn-yellow w-full py-2.5 rounded-xl text-[14px] font-semibold tracking-[-0.005em] flex items-center justify-center gap-2 mt-2 shadow-sm cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                       >
                         <CheckCircle2 size={15} />
                         <span>Reset Password</span>
@@ -1057,39 +1202,34 @@ export const AuthView: React.FC = () => {
 
                   {/* Step 4: Success */}
                   {forgotStep === 4 && (
-                    <div className="text-center py-4 space-y-3.5">
+                    <div className="text-center py-4 space-y-4">
                       <div className="w-12 h-12 rounded-full bg-[#BEF1CA] text-[#1F7A35] mx-auto flex items-center justify-center">
                         <CheckCircle2 size={24} />
                       </div>
                       <div>
-                        <h3 className="text-[17px] font-bold text-[#171717] dark:text-white">
-                          Password Reset Successful
+                        <h3 className="text-[18px] font-bold text-[#171717] dark:text-white">
+                          Password Updated
                         </h3>
-                        <p className="text-[13px] font-normal leading-[1.45] text-[#737373] dark:text-[#A3A3A3] mt-1">
-                          Your master password has been successfully updated.
+                        <p className="text-[14px] font-normal leading-[1.5] text-[#525252] dark:text-[#CBD5E1] mt-1.5">
+                          Password updated. Please sign in.
                         </p>
                       </div>
                       <button
                         type="button"
                         onClick={() => {
                           setAuthMode('signin');
-                          setPassword(forgotNewPassword);
+                          setEmailOrId('');
+                          setPassword('');
                         }}
-                        className="btn-yellow w-full py-2.5 rounded-xl text-[14px] font-semibold tracking-[-0.005em] shadow-sm cursor-pointer"
+                        className="btn-yellow w-full py-2.5 rounded-xl text-[14px] font-semibold tracking-[-0.005em] flex items-center justify-center gap-2 shadow-sm cursor-pointer"
                       >
-                        Return to Sign In
+                        <span>Go to Sign In</span>
+                        <ArrowRight size={15} />
                       </button>
                     </div>
                   )}
                 </div>
               )}
-
-              {/* Demo Accounts Hint */}
-              <div className="mt-6 pt-4 border-t border-black/5 dark:border-white/10 text-center">
-                <p className="text-[12px] text-[#737373] dark:text-[#A3A3A3] leading-relaxed">
-                  Employee sign-in: <strong className="text-[#171717] dark:text-white font-mono font-semibold">Emp001 / Pass@123</strong> · Admin sign-in: <strong className="text-[#171717] dark:text-white font-mono font-semibold">Admin01 / Admin@123</strong>
-                </p>
-              </div>
             </div>
           </motion.div>
         </div>

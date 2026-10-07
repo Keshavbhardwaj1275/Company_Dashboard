@@ -19,6 +19,7 @@ import {
   initialDeviceSessions,
   initialIdleExceptions
 } from '../data/mockData';
+import { loadActivatedAccounts } from '../utils/authCrypto';
 
 export interface ToastMessage {
   id: string;
@@ -102,12 +103,24 @@ const createSessionFromEmployee = (emp: Employee): WorkSession => ({
 export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   const [employees, setEmployees] = useState<Employee[]>(() => {
     try {
-      const saved = localStorage.getItem('flowsphere-employees-dataset');
-      if (saved) return JSON.parse(saved);
+      const activatedStore = loadActivatedAccounts();
+      const base = initialEmployees.map((emp) => {
+        const stored = activatedStore[emp.employeeId.toLowerCase()] || activatedStore[emp.id.toLowerCase()];
+        if (stored) {
+          return {
+            ...emp,
+            activated: stored.activated,
+            passwordHash: stored.passwordHash,
+            passwordSalt: stored.passwordSalt,
+          };
+        }
+        return emp;
+      });
+      return base;
     } catch (e) {
       console.error(e);
+      return initialEmployees;
     }
-    return initialEmployees;
   });
 
   const [currentUser, setCurrentUserState] = useState<Employee>(() => {
@@ -115,10 +128,14 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       const savedEmpId = localStorage.getItem('flowsphere-auth-emp-id');
       const isAuth = localStorage.getItem('flowsphere-is-authenticated') === 'true';
       if (isAuth && savedEmpId) {
+        const activatedStore = loadActivatedAccounts();
         const match = initialEmployees.find(
-          (e) => e.employeeId.toLowerCase() === savedEmpId.toLowerCase() || e.id === savedEmpId
+          (e) => e.employeeId.toLowerCase() === savedEmpId.toLowerCase() || e.id === savedEmpId || e.loginId?.toLowerCase() === savedEmpId.toLowerCase()
         );
-        if (match) return match;
+        if (match) {
+          const stored = activatedStore[match.employeeId.toLowerCase()] || activatedStore[match.id.toLowerCase()];
+          return stored ? { ...match, ...stored } : match;
+        }
       }
     } catch (e) {
       console.error(e);

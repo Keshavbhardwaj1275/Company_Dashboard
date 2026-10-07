@@ -9,6 +9,9 @@ export interface Employee {
   email: string;
   loginId?: string;
   password?: string;
+  passwordHash?: string;
+  passwordSalt?: string;
+  activated?: boolean;
   avatar: string;
   department: 'Engineering' | 'Design' | 'Product' | 'Marketing' | 'HR' | 'Finance' | 'Operations';
   firstTimeCompleted?: boolean;
