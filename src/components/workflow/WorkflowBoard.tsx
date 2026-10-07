@@ -17,11 +17,14 @@ import { useApp } from '../../context/AppContext';
 import { GlassCard } from '../common/GlassCard';
 import { Modal } from '../common/Modal';
 import { UserAvatar } from '../common/UserAvatar';
-import { TaskPriority, TaskStatus } from '../../types';
+import { TaskPriority, TaskStatus, WorkflowTask } from '../../types';
 
 export const WorkflowBoard: React.FC = () => {
-  const { tasks, updateTaskStatus, addTask, currentUser, employees } = useApp();
+  const { tasks, updateTaskStatus, addTask, approveTask, rejectTask, currentUser, employees, role } = useApp();
+  const isAdmin = role === 'admin';
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
+  const [rejectingTask, setRejectingTask] = useState<WorkflowTask | null>(null);
+  const [rejectionReason, setRejectionReason] = useState('Please update test verification before final signoff.');
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedPriority, setSelectedPriority] = useState<string>('all');
   const [selectedDept, setSelectedDept] = useState<string>('all');
@@ -147,11 +150,11 @@ export const WorkflowBoard: React.FC = () => {
       </div>
 
       {/* 4-Column Kanban Board */}
-      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3.5">
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3.5 items-start">
         {columns.map((col) => {
           const colTasks = filteredTasks.filter((t) => t.status === col.status);
           return (
-            <div key={col.status} className="flex flex-col space-y-2.5">
+            <div key={col.status} className="flex flex-col space-y-2.5 self-start w-full">
               {/* Column Header */}
               <div className="flex items-center justify-between px-1.5">
                 <div className="flex items-center gap-2">
@@ -165,7 +168,7 @@ export const WorkflowBoard: React.FC = () => {
               </div>
 
               {/* Task Cards Stack (Glass Well Container) */}
-              <div className="space-y-3 min-h-[460px] p-3 rounded-[22px] glass-inner">
+              <div className="space-y-3 p-3 rounded-[22px] glass-inner">
                 {colTasks.length === 0 ? (
                   <div className="h-44 flex flex-col items-center justify-center text-center p-4 rounded-xl border border-dashed border-black/10 dark:border-white/10 text-[#94A3B8]">
                     <CheckSquare size={24} className="mb-2 opacity-40" />
@@ -268,8 +271,8 @@ export const WorkflowBoard: React.FC = () => {
                       </div>
 
                       {/* Quick Action Transition Buttons */}
-                      <div className="mt-2.5 pt-2.5 border-t border-dashed border-black/5 dark:border-white/10 flex items-center justify-between gap-1.5">
-                        {col.status === 'todo' && (
+                      <div className="mt-2.5 pt-2.5 border-t border-dashed border-black/5 dark:border-white/10 flex items-center justify-between gap-1.5 flex-wrap">
+                        {col.status === 'todo' && (task.assignedTo === currentUser.employeeId || task.assignedTo === currentUser.id || isAdmin) && (
                           <button
                             type="button"
                             onClick={() => updateTaskStatus(task.id, 'in_progress')}
@@ -282,34 +285,70 @@ export const WorkflowBoard: React.FC = () => {
 
                         {col.status === 'in_progress' && (
                           <>
-                            <button
-                              type="button"
-                              onClick={() => updateTaskStatus(task.id, 'todo')}
-                              className="text-[11px] px-2.5 py-1 rounded glass-control text-[#475569] dark:text-[#94A3B8] hover:text-[#0F172A] dark:hover:text-white font-medium transition-colors flex items-center gap-1 cursor-pointer"
-                            >
-                              <ArrowLeft size={11} />
-                              <span>To Do</span>
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => updateTaskStatus(task.id, 'pending_approval')}
-                              className="text-[11px] px-2.5 py-1 rounded bg-[#FEF3C7] text-[#92400E] dark:bg-amber-950/50 dark:text-amber-300 font-semibold transition-colors flex items-center gap-1 cursor-pointer hover:bg-amber-200 dark:hover:bg-amber-900"
-                            >
-                              <span>Submit for Approval</span>
-                              <ArrowRight size={11} />
-                            </button>
+                            {(task.assignedTo === currentUser.employeeId || task.assignedTo === currentUser.id || isAdmin) && (
+                              <button
+                                type="button"
+                                onClick={() => updateTaskStatus(task.id, 'todo')}
+                                className="text-[11px] px-2.5 py-1 rounded glass-control text-[#475569] dark:text-[#94A3B8] hover:text-[#0F172A] dark:hover:text-white font-medium transition-colors flex items-center gap-1 cursor-pointer"
+                              >
+                                <ArrowLeft size={11} />
+                                <span>To Do</span>
+                              </button>
+                            )}
+                            {(task.assignedTo === currentUser.employeeId || task.assignedTo === currentUser.id || isAdmin) && (
+                              <button
+                                type="button"
+                                onClick={() => updateTaskStatus(task.id, 'pending_approval')}
+                                className="text-[11px] px-2.5 py-1 rounded bg-[#FEF3C7] text-[#92400E] dark:bg-amber-950/50 dark:text-amber-300 font-semibold transition-colors flex items-center gap-1 cursor-pointer hover:bg-amber-200 dark:hover:bg-amber-900 ml-auto"
+                              >
+                                <span>Submit for Approval</span>
+                                <ArrowRight size={11} />
+                              </button>
+                            )}
                           </>
                         )}
 
                         {col.status === 'pending_approval' && (
-                          <button
-                            type="button"
-                            onClick={() => updateTaskStatus(task.id, 'in_progress')}
-                            className="text-[11px] px-2.5 py-1 rounded glass-control text-[#475569] dark:text-[#94A3B8] hover:text-[#0F172A] dark:hover:text-white font-medium transition-colors flex items-center gap-1 cursor-pointer"
-                          >
-                            <ArrowLeft size={11} />
-                            <span>Withdraw (In Progress)</span>
-                          </button>
+                          <div className="flex items-center justify-between w-full gap-1.5 flex-wrap">
+                            {/* Withdraw: only the person who owns the task (or an admin) */}
+                            {(task.assignedTo === currentUser.employeeId || task.assignedTo === currentUser.id || isAdmin) && (
+                              <button
+                                type="button"
+                                onClick={() => updateTaskStatus(task.id, 'in_progress')}
+                                className="text-[11px] px-2.5 py-1 rounded glass-control text-[#475569] dark:text-[#94A3B8] hover:text-[#0F172A] dark:hover:text-white font-medium transition-colors flex items-center gap-1 cursor-pointer"
+                                title="Withdraw back to In Progress"
+                              >
+                                <ArrowLeft size={11} />
+                                <span>Withdraw</span>
+                              </button>
+                            )}
+
+                            {/* Approve / Reject: admin ONLY. Do not render at all for employees. */}
+                            {isAdmin && (
+                              <div className="flex items-center gap-1.5 ml-auto">
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setRejectingTask(task);
+                                    setRejectionReason('Please update test verification before final signoff.');
+                                  }}
+                                  className="text-[11px] px-2.5 py-1 rounded bg-rose-50 text-rose-700 dark:bg-rose-950/40 dark:text-rose-300 font-semibold transition-colors flex items-center gap-0.5 cursor-pointer hover:bg-rose-100 dark:hover:bg-rose-900/60"
+                                  title="Reject and send back to In Progress with feedback"
+                                >
+                                  <span>Reject</span>
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => approveTask(task.id, currentUser.name || 'Admin')}
+                                  className="text-[11px] px-2.5 py-1 rounded bg-[#BEF1CA] text-[#1F7A35] dark:bg-emerald-950/50 dark:text-emerald-300 font-semibold transition-colors flex items-center gap-1 cursor-pointer hover:bg-emerald-200 dark:hover:bg-emerald-900 shadow-sm"
+                                  title="Approve and mark completed"
+                                >
+                                  <CheckCircle2 size={11} />
+                                  <span>Approve</span>
+                                </button>
+                              </div>
+                            )}
+                          </div>
                         )}
 
                         {col.status === 'completed' && (
@@ -458,18 +497,63 @@ export const WorkflowBoard: React.FC = () => {
             <button
               type="button"
               onClick={() => setIsAddModalOpen(false)}
-              className="px-4 py-2 text-xs font-medium rounded-xl glass-control text-[#475569] hover:text-[#0F172A]"
+              className="px-4 py-2 text-xs font-medium rounded-xl glass-control text-[#475569] hover:text-[#0F172A] cursor-pointer"
             >
               Cancel
             </button>
             <button
               type="submit"
-              className="btn-yellow px-4 py-2 text-xs font-semibold rounded-xl"
+              className="btn-yellow px-4 py-2 text-xs font-semibold rounded-xl cursor-pointer"
             >
               Create & Assign Task
             </button>
           </div>
         </form>
+      </Modal>
+
+      {/* Reject Task Modal */}
+      <Modal
+        isOpen={!!rejectingTask}
+        onClose={() => setRejectingTask(null)}
+        title="Send Task Back for Revision"
+        subtitle={`Return "${rejectingTask?.title}" with feedback for assignee`}
+      >
+        <div className="space-y-4">
+          <div>
+            <label className="block text-xs font-medium text-[#475569] dark:text-[#94A3B8] mb-1">
+              Feedback / Reason for Revision
+            </label>
+            <textarea
+              rows={3}
+              value={rejectionReason}
+              onChange={(e) => setRejectionReason(e.target.value)}
+              placeholder="Explain what needs to be completed or corrected..."
+              className="w-full px-3 py-2 text-xs glass-control rounded-xl text-[#0F172A] dark:text-white outline-none focus:ring-1 focus:ring-[#FFE956]"
+            />
+          </div>
+
+          <div className="flex items-center justify-end gap-2 pt-2 border-t border-black/5 dark:border-white/10">
+            <button
+              type="button"
+              onClick={() => setRejectingTask(null)}
+              className="px-4 py-1.5 text-xs glass-control rounded-lg text-[#475569] dark:text-[#94A3B8] font-medium cursor-pointer"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                if (rejectingTask) {
+                  rejectTask(rejectingTask.id, currentUser.name || 'Admin', rejectionReason.trim() || 'Needs revision');
+                  setRejectingTask(null);
+                }
+              }}
+              className="px-4 py-1.5 text-xs bg-rose-600 hover:bg-rose-700 text-white rounded-lg font-semibold transition-colors shadow-sm cursor-pointer"
+            >
+              Confirm & Return to In Progress
+            </button>
+          </div>
+        </div>
       </Modal>
     </div>
   );

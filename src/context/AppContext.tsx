@@ -466,6 +466,11 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   };
 
   const updateTaskStatus = (taskId: string, newStatus: TaskStatus) => {
+    if (newStatus === 'completed' && role !== 'admin') {
+      addToast('Not allowed', 'Only an admin can approve and complete tasks.', 'error');
+      return;
+    }
+
     setTasks((prev) =>
       prev.map((t) => {
         if (t.id === taskId) {
@@ -501,6 +506,11 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   };
 
   const approveTask = (taskId: string, adminName: string) => {
+    if (role !== 'admin') {
+      addToast('Not allowed', 'Only an admin can approve tasks.', 'error');
+      return;
+    }
+
     setTasks((prev) =>
       prev.map((t) =>
         t.id === taskId
@@ -528,6 +538,11 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   };
 
   const rejectTask = (taskId: string, adminName: string, reason: string) => {
+    if (role !== 'admin') {
+      addToast('Not allowed', 'Only an admin can reject tasks.', 'error');
+      return;
+    }
+
     setTasks((prev) =>
       prev.map((t) =>
         t.id === taskId

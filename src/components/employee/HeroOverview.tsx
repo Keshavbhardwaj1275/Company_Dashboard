@@ -227,16 +227,14 @@ export const HeroOverview: React.FC = () => {
                 </div>
               </div>
 
-              {/* Interactive Checklist */}
+              {/* Sprint Milestones Checklist (Status reflection) */}
               <div className="glass-inner p-2.5 space-y-1.5 mt-2.5">
                 {checklist.map((item) => {
                   const isDone = item.status === 'completed';
                   return (
                     <div
                       key={item.id}
-                      onClick={() => toggleChecklistItem(item.id)}
-                      className="flex items-center justify-between py-1.5 px-2 rounded-lg hover:bg-white/60 dark:hover:bg-white/5 transition-colors cursor-pointer"
-                      title="Click to toggle status"
+                      className="flex items-center justify-between py-1.5 px-2 rounded-lg transition-colors"
                     >
                       <div className="flex items-center gap-2 min-w-0">
                         {isDone ? (
